@@ -619,6 +619,24 @@ num_groups = 2
                 test_script.replace("\n", "; ") + "'"], num_nodes=1,
                 num_tasks=num_partitions)
     assert not exit_code
+
+def test_mpi_multiple_nodes():
+    pytest.importorskip("mpi4py")
+
+    if "MPI_EXECUTOR_TYPE" not in os.environ:
+        pytest.skip("No MPI executor specified.")
+    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
+
+    test_script = """from mpi4py import MPI
+rank = MPI.COMM_WORLD.Get_rank()
+import socket
+print(f"Rank {rank} on node {socket.gethostname()}")"""
+
+    import sys
+    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", "-c", "'" +
+                test_script.replace("\n", "; ") + "'"], num_nodes=2,
+                tasks_per_node=2)
+    assert not exit_code
     
 # }}}
 
