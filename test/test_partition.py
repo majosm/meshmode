@@ -52,6 +52,75 @@ TAG_SEND_REMOTE_NODES = TAG_BASE + 3
 TAG_SEND_LOCAL_NODES = TAG_BASE + 4
 
 
+import abc
+
+
+class MPIExecutor(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def __call__(self, command, num_tasks=None, num_nodes=None,
+                tasks_per_node=None):
+        pass
+
+
+class BasicMPIExecutor(MPIExecutor):
+    def __call__(self, command, num_tasks=None, num_nodes=None,
+                tasks_per_node=None):
+        mpi_command = ["mpiexec"]
+        if num_tasks is not None:
+            mpi_command += ["-n", str(num_tasks)]
+        else:
+            # mpiexec doesn't really support setting node counts, but
+            # we can launch the equivalent number of tasks
+            if num_nodes is not None:
+                if tasks_per_node is not None:
+                    mpi_command += ["-n", str(num_nodes*tasks_per_node)]
+                else:
+                    from multiprocessing import cpu_count
+                    mpi_command += ["-n", str(num_nodes*cpu_count())]
+        mpi_command += command
+        from subprocess import call
+        return call(mpi_command)
+
+
+class SlurmMPIExecutor(MPIExecutor):
+    def __call__(self, command, num_tasks=None, num_nodes=None,
+                tasks_per_node=None):
+        mpi_command = ["srun"]
+        if num_tasks is not None:
+            mpi_command += ["-n", str(num_tasks)]
+        if num_nodes is not None:
+            mpi_command += ["-N", str(num_nodes)]
+        if tasks_per_node is not None:
+            mpi_command += [f"--ntasks-per-node={tasks_per_node}"]
+        mpi_command += command
+        from subprocess import call
+        return call(command)
+
+
+class LCLSFMPIExecutor(MPIExecutor):
+    def __call__(self, command, num_tasks=None, num_nodes=None,
+                tasks_per_node=None):
+        mpi_command = ["lrun"]
+        if num_tasks is not None:
+            mpi_command += ["-n", str(num_tasks)]
+        if num_nodes is not None:
+            mpi_command += ["-N", str(num_nodes)]
+        if tasks_per_node is not None:
+            mpi_command += ["-T", str(tasks_per_node)]
+        mpi_command += command
+        from subprocess import call
+        return call(command)
+
+
+def make_mpi_executor(executor_type):
+    type_map = {
+        "basic": BasicMPIExecutor,
+        "slurm": SlurmMPIExecutor,
+        "lclsf": LCLSFMPIExecutor
+    }
+    return type_map[executor_type]()
+
+
 # {{{ partition_interpolation
 
 @pytest.mark.parametrize("num_parts", [3])
@@ -529,39 +598,40 @@ def _test_data_transfer(mpi_comm, actx, local_bdry_conns,
 
 # {{{ MPI pytest entrypoint
 
-@pytest.mark.mpi
 @pytest.mark.parametrize("num_partitions", [3, 4])
 @pytest.mark.parametrize("order", [2, 3])
 def test_mpi_communication(num_partitions, order):
     pytest.importorskip("mpi4py")
 
-    num_ranks = num_partitions
-    from subprocess import check_call
+    if "MPI_EXECUTOR_TYPE" not in os.environ:
+        pytest.skip("No MPI executor specified.")
+    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
+
+    module_dir, module_file = os.path.split(__file__)
+    module_name = os.path.splitext(module_file)[0]
+
+    test_script = f"""
+import sys
+sys.path.append('{module_dir}')
+import {module_name}
+dim = 2
+num_groups = 2
+{module_name}._test_mpi_boundary_swap(dim, {order}, num_groups)"""
+
     import sys
-    check_call([
-        "mpiexec", "-np", str(num_ranks),
-        "-x", "RUN_WITHIN_MPI=1",
-        "-x", "order=%d" % order,
-
-        # https://mpi4py.readthedocs.io/en/stable/mpi4py.run.html
-        sys.executable, "-m", "mpi4py.run", __file__],
-        )
-
+    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", "-c", test_script],
+                num_tasks=num_partitions)
+    assert not exit_code
+    
 # }}}
 
 
 if __name__ == "__main__":
-    if "RUN_WITHIN_MPI" in os.environ:
-        dim = 2
-        order = int(os.environ["order"])
-        num_groups = 2
-        _test_mpi_boundary_swap(dim, order, num_groups)
+    import sys
+    if len(sys.argv) > 1:
+        exec(sys.argv[1])
     else:
-        import sys
-        if len(sys.argv) > 1:
-            exec(sys.argv[1])
-        else:
-            from pytest import main
-            main([__file__])
+        from pytest import main
+        main([__file__])
 
 # vim: fdm=marker
