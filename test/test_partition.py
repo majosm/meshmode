@@ -78,8 +78,7 @@ class BasicMPIExecutor(MPIExecutor):
                     from multiprocessing import cpu_count
                     mpi_command += ["-n", str(num_nodes*cpu_count())]
         mpi_command += command
-        from subprocess import call
-        return call(mpi_command)
+        return os.system(" ".join(mpi_command))
 
 
 class SlurmMPIExecutor(MPIExecutor):
@@ -93,8 +92,7 @@ class SlurmMPIExecutor(MPIExecutor):
         if tasks_per_node is not None:
             mpi_command += [f"--ntasks-per-node={tasks_per_node}"]
         mpi_command += command
-        from subprocess import call
-        return call(command)
+        return os.system(" ".join(mpi_command))
 
 
 class LCLSFMPIExecutor(MPIExecutor):
@@ -108,8 +106,7 @@ class LCLSFMPIExecutor(MPIExecutor):
         if tasks_per_node is not None:
             mpi_command += ["-T", str(tasks_per_node)]
         mpi_command += command
-        from subprocess import call
-        return call(command)
+        return os.system(" ".join(mpi_command))
 
 
 def make_mpi_executor(executor_type):
@@ -610,16 +607,16 @@ def test_mpi_communication(num_partitions, order):
     module_dir, module_file = os.path.split(__file__)
     module_name = os.path.splitext(module_file)[0]
 
-    test_script = f"""
-import sys
-sys.path.append('{module_dir}')
+    test_script = f"""import sys
+sys.path.append("{module_dir}")
 import {module_name}
 dim = 2
 num_groups = 2
 {module_name}._test_mpi_boundary_swap(dim, {order}, num_groups)"""
 
     import sys
-    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", "-c", test_script],
+    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", "-c", "'" +
+                test_script.replace("\n", "; ") + "'"], num_nodes=1,
                 num_tasks=num_partitions)
     assert not exit_code
     
