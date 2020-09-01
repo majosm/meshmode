@@ -118,6 +118,28 @@ def make_mpi_executor(executor_type):
     return type_map[executor_type]()
 
 
+def run_mpi_test(test, args={}, num_tasks=None, num_nodes=None,
+            tasks_per_node=None):
+    pytest.importorskip("mpi4py")
+
+    if "MPI_EXECUTOR_TYPE" not in os.environ:
+        pytest.skip("No MPI executor specified.")
+    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
+
+    import pickle
+    pickled_test = pickle.dumps(test).hex()
+    pickled_args = pickle.dumps(args).hex()
+
+    os.environ["RUN_WITHIN_MPI"] = "1"
+
+    import sys
+    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", __file__,
+                pickled_test, pickled_args], num_tasks=num_tasks,
+                num_nodes=num_nodes, tasks_per_node=tasks_per_node)
+
+    assert not exit_code
+
+
 # {{{ partition_interpolation
 
 @pytest.mark.parametrize("num_parts", [3])
@@ -590,63 +612,50 @@ def _test_data_transfer(mpi_comm, actx, local_bdry_conns,
         err = norm(true_local_f - local_f, np.inf)
         assert err < 1e-11, "Error = %f is too large" % err
 
+
+@pytest.mark.parametrize("num_parts", [3, 4])
+@pytest.mark.parametrize("order", [2, 3])
+def test_mpi_boundary_swap(num_parts, order):
+    run_mpi_test(_test_mpi_boundary_swap, {
+        "dim": 2,
+        "num_groups": 2,
+        "order": order
+    }, num_tasks=num_parts)
+
 # }}}
 
 
-# {{{ MPI pytest entrypoint
+# {{{ MPI test with array context
 
-@pytest.mark.parametrize("num_partitions", [3, 4])
-@pytest.mark.parametrize("order", [2, 3])
-def test_mpi_communication(num_partitions, order):
-    pytest.importorskip("mpi4py")
+def _test_mpi_array_context(actx_factory):
+    from mpi4py import MPI
+    rank = MPI.COMM_WORLD.Get_rank()
+    import socket
+    print(f"Rank {rank} on node {socket.gethostname()}")
+    actx = actx_factory()
+    10.*actx.np.sin(50.*x)
 
-    if "MPI_EXECUTOR_TYPE" not in os.environ:
-        pytest.skip("No MPI executor specified.")
-    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
 
-    module_dir, module_file = os.path.split(__file__)
-    module_name = os.path.splitext(module_file)[0]
+def test_mpi_array_context(actx_factory):
+    run_mpi_test(_test_mpi_array_context, {"actx_factory": actx_factory},
+                num_nodes=2, tasks_per_node=1)
 
-    test_script = f"""import sys
-sys.path.append("{module_dir}")
-import {module_name}
-dim = 2
-num_groups = 2
-{module_name}._test_mpi_boundary_swap(dim, {order}, num_groups)"""
-
-    import sys
-    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", "-c", "'" +
-                test_script.replace("\n", "; ") + "'"], num_nodes=1,
-                num_tasks=num_partitions)
-    assert not exit_code
-
-def test_mpi_multiple_nodes():
-    pytest.importorskip("mpi4py")
-
-    if "MPI_EXECUTOR_TYPE" not in os.environ:
-        pytest.skip("No MPI executor specified.")
-    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
-
-    test_script = """from mpi4py import MPI
-rank = MPI.COMM_WORLD.Get_rank()
-import socket
-print(f"Rank {rank} on node {socket.gethostname()}")"""
-
-    import sys
-    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", "-c", "'" +
-                test_script.replace("\n", "; ") + "'"], num_nodes=2,
-                tasks_per_node=2)
-    assert not exit_code
-    
 # }}}
 
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1:
-        exec(sys.argv[1])
+    if "RUN_WITHIN_MPI" in os.environ:
+        import sys
+        import pickle
+        test = pickle.loads(bytes.fromhex(sys.argv[1]))
+        args = pickle.loads(bytes.fromhex(sys.argv[2]))
+        test(**args)
     else:
-        from pytest import main
-        main([__file__])
+        import sys
+        if len(sys.argv) > 1:
+            exec(sys.argv[1])
+        else:
+            from pytest import main
+            main([__file__])
 
 # vim: fdm=marker
