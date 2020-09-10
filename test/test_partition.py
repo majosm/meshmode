@@ -28,6 +28,7 @@ THE SOFTWARE.
 from six.moves import range
 import numpy as np
 import pyopencl as cl
+from functools import partial
 
 from meshmode.dof_array import thaw, flatten, unflatten, flat_norm
 
@@ -118,8 +119,7 @@ def make_mpi_executor(executor_type):
     return type_map[executor_type]()
 
 
-def run_mpi_test(test, args={}, num_tasks=None, num_nodes=None,
-            tasks_per_node=None):
+def run_mpi_test(test, num_tasks=None, num_nodes=None, tasks_per_node=None):
     pytest.importorskip("mpi4py")
 
     if "MPI_EXECUTOR_TYPE" not in os.environ:
@@ -128,14 +128,13 @@ def run_mpi_test(test, args={}, num_tasks=None, num_nodes=None,
 
     import pickle
     pickled_test = pickle.dumps(test).hex()
-    pickled_args = pickle.dumps(args).hex()
 
     os.environ["RUN_WITHIN_MPI"] = "1"
 
     import sys
     exit_code = mpi_exec([sys.executable, "-m", "mpi4py", __file__,
-                pickled_test, pickled_args], num_tasks=num_tasks,
-                num_nodes=num_nodes, tasks_per_node=tasks_per_node)
+                pickled_test], num_tasks=num_tasks, num_nodes=num_nodes,
+                tasks_per_node=tasks_per_node)
 
     assert not exit_code
 
@@ -616,11 +615,8 @@ def _test_data_transfer(mpi_comm, actx, local_bdry_conns,
 @pytest.mark.parametrize("num_parts", [3, 4])
 @pytest.mark.parametrize("order", [2, 3])
 def test_mpi_boundary_swap(num_parts, order):
-    run_mpi_test(_test_mpi_boundary_swap, {
-        "dim": 2,
-        "num_groups": 2,
-        "order": order
-    }, num_tasks=num_parts)
+    run_mpi_test(partial(_test_mpi_boundary_swap, dim=2, num_groups=2, order=order),
+                num_tasks=num_parts)
 
 # }}}
 
@@ -674,8 +670,8 @@ def _test_mpi_array_context(actx_factory):
 
 
 def test_mpi_array_context(actx_factory):
-    run_mpi_test(_test_mpi_array_context, {"actx_factory": actx_factory},
-                num_nodes=1, tasks_per_node=1)
+    run_mpi_test(partial(_test_mpi_array_context, actx_factory), num_nodes=1,
+                tasks_per_node=1)
 
 # }}}
 
@@ -685,8 +681,7 @@ if __name__ == "__main__":
         import sys
         import pickle
         test = pickle.loads(bytes.fromhex(sys.argv[1]))
-        args = pickle.loads(bytes.fromhex(sys.argv[2]))
-        test(**args)
+        test()
     else:
         import sys
         if len(sys.argv) > 1:
