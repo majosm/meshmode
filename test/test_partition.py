@@ -421,7 +421,7 @@ def count_tags(mesh, tag):
 
 # {{{ MPI test boundary swap
 
-def _test_mpi_boundary_swap(dim, order, num_groups):
+def _test_mpi_boundary_swap(actx_factory, dim, order, num_groups):
     from meshmode.distributed import MPIMeshDistributor, MPIBoundaryCommSetupHelper
 
     from mpi4py import MPI
@@ -451,10 +451,7 @@ def _test_mpi_boundary_swap(dim, order, num_groups):
 
     group_factory = PolynomialWarpAndBlendGroupFactory(order)
 
-    from meshmode.array_context import PyOpenCLArrayContext
-    cl_ctx = cl.create_some_context()
-    queue = cl.CommandQueue(cl_ctx)
-    actx = PyOpenCLArrayContext(queue)
+    actx = actx_factory()
 
     from meshmode.discretization import Discretization
     vol_discr = Discretization(actx, local_mesh, group_factory)
@@ -613,64 +610,9 @@ def _test_data_transfer(mpi_comm, actx, local_bdry_conns,
 
 @pytest.mark.parametrize("num_parts", [3, 4])
 @pytest.mark.parametrize("order", [2, 3])
-def test_mpi_boundary_swap(num_parts, order):
-    run_mpi_test(partial(_test_mpi_boundary_swap, dim=2, num_groups=2, order=order),
-                num_tasks=num_parts)
-
-# }}}
-
-
-# {{{ MPI test with array context
-
-def _test_mpi_array_context(actx_factory):
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    num_parts = comm.Get_size()
-    rank = comm.Get_rank()
-
-    import socket
-    print(f"Rank {rank} on node {socket.gethostname()}")
-
-    actx = actx_factory()
-
-    from meshmode.distributed import MPIMeshDistributor, get_partition_by_pymetis
-    mesh_dist = MPIMeshDistributor(comm)
-
-    dim = 2
-    nel_1d = 8
-
-    if mesh_dist.is_mananger_rank():
-        from meshmode.mesh.generation import generate_regular_rect_mesh
-        mesh = generate_regular_rect_mesh(
-            a=(-0.5,)*dim,
-            b=(0.5,)*dim,
-            n=(nel_1d,)*dim)
-
-        part_per_element = get_partition_by_pymetis(mesh, num_parts)
-
-        local_mesh = mesh_dist.send_mesh_parts(mesh, part_per_element, num_parts)
-
-        del mesh
-
-    else:
-        local_mesh = mesh_dist.receive_mesh_part()
-
-    order = 3
-
-    from grudge.eager import EagerDGDiscretization
-    discr = EagerDGDiscretization(actx, local_mesh, order=order,
-                    mpi_communicator=comm)
-
-    from meshmode.dof_array import thaw
-    x = thaw(actx, discr.nodes()[0])
-
-    10.*actx.np.sin(50.*x)
-
-
-def test_mpi_array_context(actx_factory):
-    run_mpi_test(partial(_test_mpi_array_context, actx_factory), num_nodes=1,
-                tasks_per_node=1)
+def test_mpi_boundary_swap(actx_factory, num_parts, order):
+    run_mpi_test(partial(_test_mpi_boundary_swap, actx_factory=actx_factory, dim=2,
+                num_groups=2, order=order), num_tasks=num_parts)
 
 # }}}
 
