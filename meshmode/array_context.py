@@ -351,19 +351,44 @@ class PyOpenCLArrayContext(ArrayContext):
         return lp.tag_inames(program, {outer_iname: "g.0"})
 
 
+from pyopencl.tools import _ContextFactory
+
+class _ArrayContextFactory(_ContextFactory):
+    def __call__(self):
+        import pyopencl as cl
+        ctx = super(_ArrayContextFactory, self).__call__()
+        return PyOpenCLArrayContext(cl.CommandQueue(ctx))
+
+    def __str__(self):
+        return ("<array context factory for <pyopencl.Device '%s' on '%s'>" %
+                (self.device.name.strip(),
+                 self.device.platform.name.strip()))
+
+    def __getstate__(self):
+        return self.device.platform.name, self.device.name
+
+    def __setstate__(self, names):
+        import pyopencl as cl
+        platform_name, device_name = names
+        platform = None
+        for p in cl.get_platforms():
+            if p.name == platform_name:
+                platform = p
+                break
+        if platform is None:
+            raise RuntimeError("Could not find platform '{platform_name}'.")
+        device = None
+        for d in platform.get_devices():
+            if d.name == device_name:
+                device = d
+                break
+        if device is None:
+            raise RuntimeError("Could not find device '{device_name}'.")
+        self.__init__(device)
+
+
 def pytest_generate_tests_for_pyopencl_array_context(metafunc):
     import pyopencl as cl
-    from pyopencl.tools import _ContextFactory
-
-    class ArrayContextFactory(_ContextFactory):
-        def __call__(self):
-            ctx = super(ArrayContextFactory, self).__call__()
-            return PyOpenCLArrayContext(cl.CommandQueue(ctx))
-
-        def __str__(self):
-            return ("<array context factory for <pyopencl.Device '%s' on '%s'>" %
-                    (self.device.name.strip(),
-                     self.device.platform.name.strip()))
 
     import pyopencl.tools as cl_tools
     arg_names = cl_tools.get_pyopencl_fixture_arg_names(
@@ -379,7 +404,7 @@ def pytest_generate_tests_for_pyopencl_array_context(metafunc):
                     "'ctx_factory' / 'ctx_getter' as arguments.")
 
         for arg_dict in arg_values:
-            arg_dict["actx_factory"] = ArrayContextFactory(arg_dict["device"])
+            arg_dict["actx_factory"] = _ArrayContextFactory(arg_dict["device"])
 
     arg_values = [
             tuple(arg_dict[name] for name in arg_names)
