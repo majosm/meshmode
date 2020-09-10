@@ -127,13 +127,12 @@ def run_mpi_test(test, num_tasks=None, num_nodes=None, tasks_per_node=None):
     mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
 
     import pickle
-    pickled_test = pickle.dumps(test).hex()
-
-    os.environ["RUN_WITHIN_MPI"] = "1"
+    calling_code = ("\'import sys; import pickle; pickle.loads(bytes.fromhex(\"" +
+                    pickle.dumps(test).hex() + "\"))()\'")
 
     import sys
-    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", __file__,
-                pickled_test], num_tasks=num_tasks, num_nodes=num_nodes,
+    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", __file__, calling_code],
+                num_tasks=num_tasks, num_nodes=num_nodes,
                 tasks_per_node=tasks_per_node)
 
     assert not exit_code
@@ -677,17 +676,11 @@ def test_mpi_array_context(actx_factory):
 
 
 if __name__ == "__main__":
-    if "RUN_WITHIN_MPI" in os.environ:
-        import sys
-        import pickle
-        test = pickle.loads(bytes.fromhex(sys.argv[1]))
-        test()
+    import sys
+    if len(sys.argv) > 1:
+        exec(sys.argv[1])
     else:
-        import sys
-        if len(sys.argv) > 1:
-            exec(sys.argv[1])
-        else:
-            from pytest import main
-            main([__file__])
+        from pytest import main
+        main([__file__])
 
 # vim: fdm=marker
