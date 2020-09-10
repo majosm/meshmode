@@ -28,7 +28,7 @@ THE SOFTWARE.
 from six.moves import range
 import numpy as np
 import pyopencl as cl
-from functools import partial
+from functools import partial, wraps
 
 from meshmode.dof_array import thaw, flatten, unflatten, flat_norm
 
@@ -134,14 +134,35 @@ def make_mpi_executor(executor_type):
 # }}}
 
 
-def run_mpi_test(test, num_tasks=None, num_nodes=None, tasks_per_node=None):
-    pytest.importorskip("mpi4py")
-    if "MPI_EXECUTOR_TYPE" not in os.environ:
-        pytest.skip("No MPI executor specified.")
-    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
-    exit_code = mpi_exec.call(test, num_tasks=num_tasks, num_nodes=num_nodes,
-                tasks_per_node=tasks_per_node)
-    assert not exit_code
+def _duplicate_func(f, new_name):
+    import inspect
+    from types import FunctionType
+    new_f = FunctionType(f.__code__, f.__globals__, new_name, f.__defaults__,
+                f.__closure__)
+    new_f.__qualname__ = new_name
+    new_f.__dict__.update(f.__dict__)
+    new_f.__kwdefaults__ = f.__kwdefaults__
+    globals()[new_name] = new_f
+
+
+def mpi_test(test):
+    test_body_name = f"_{test.__name__}_test_body"
+    _duplicate_func(test, test_body_name)
+
+    @wraps(test)
+    def launch_mpi_test(*args, **kwargs):
+        num_tasks = kwargs.get("num_tasks", None)
+        num_nodes = kwargs.get("num_nodes", None)
+        tasks_per_node = kwargs.get("tasks_per_node", None)
+        pytest.importorskip("mpi4py")
+        if "MPI_EXECUTOR_TYPE" not in os.environ:
+            pytest.skip("No MPI executor specified.")
+        mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
+        exit_code = mpi_exec.call(partial(eval(test_body_name), *args, **kwargs),
+                    num_tasks, num_nodes, tasks_per_node)
+        assert not exit_code
+
+    return launch_mpi_test
 
 
 # {{{ partition_interpolation
@@ -427,13 +448,18 @@ def count_tags(mesh, tag):
 
 # {{{ MPI test boundary swap
 
-def _test_mpi_boundary_swap(actx_factory, dim, order, num_groups):
+@pytest.mark.parametrize("order", [2, 3])
+@pytest.mark.parametrize("num_tasks", [3, 4])
+@mpi_test
+def test_mpi_boundary_swap(actx_factory, order, num_tasks):
     from meshmode.distributed import MPIMeshDistributor, MPIBoundaryCommSetupHelper
+
+    dim = 2
+    num_groups = 2
 
     from mpi4py import MPI
     mpi_comm = MPI.COMM_WORLD
     i_local_part = mpi_comm.Get_rank()
-    num_parts = mpi_comm.Get_size()
 
     mesh_dist = MPIMeshDistributor(mpi_comm)
 
@@ -449,9 +475,9 @@ def _test_mpi_boundary_swap(actx_factory, dim, order, num_groups):
         else:
             mesh = meshes[0]
 
-        part_per_element = np.random.randint(num_parts, size=mesh.nelements)
+        part_per_element = np.random.randint(num_tasks, size=mesh.nelements)
 
-        local_mesh = mesh_dist.send_mesh_parts(mesh, part_per_element, num_parts)
+        local_mesh = mesh_dist.send_mesh_parts(mesh, part_per_element, num_tasks)
     else:
         local_mesh = mesh_dist.receive_mesh_part()
 
@@ -612,13 +638,6 @@ def _test_data_transfer(mpi_comm, actx, local_bdry_conns,
         from numpy.linalg import norm
         err = norm(true_local_f - local_f, np.inf)
         assert err < 1e-11, "Error = %f is too large" % err
-
-
-@pytest.mark.parametrize("num_parts", [3, 4])
-@pytest.mark.parametrize("order", [2, 3])
-def test_mpi_boundary_swap(actx_factory, num_parts, order):
-    run_mpi_test(partial(_test_mpi_boundary_swap, actx_factory=actx_factory, dim=2,
-                num_groups=2, order=order), num_tasks=num_parts)
 
 # }}}
 
