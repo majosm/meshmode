@@ -52,6 +52,7 @@ TAG_BASE = 83411
 TAG_SEND_REMOTE_NODES = TAG_BASE + 3
 TAG_SEND_LOCAL_NODES = TAG_BASE + 4
 
+# {{{ This should go somewhere else
 
 import abc
 
@@ -61,6 +62,18 @@ class MPIExecutor(metaclass=abc.ABCMeta):
     def __call__(self, command, num_tasks=None, num_nodes=None,
                 tasks_per_node=None):
         pass
+
+    def exec_python(self, code_string, num_tasks=None, num_nodes=None,
+                tasks_per_node=None):
+        import sys
+        return self.__call__([sys.executable, "-m", "mpi4py", "-c", code_string],
+                    num_tasks, num_nodes, tasks_per_node)
+
+    def call(self, func, num_tasks=None, num_nodes=None, tasks_per_node=None):
+        import pickle
+        calling_code = ("\'import sys; import pickle; pickle.loads(bytes.fromhex(\""
+                    + pickle.dumps(func).hex() + "\"))()\'")
+        return self.exec_python(calling_code, num_tasks, num_nodes, tasks_per_node)
 
 
 class BasicMPIExecutor(MPIExecutor):
@@ -118,23 +131,16 @@ def make_mpi_executor(executor_type):
     }
     return type_map[executor_type]()
 
+# }}}
+
 
 def run_mpi_test(test, num_tasks=None, num_nodes=None, tasks_per_node=None):
     pytest.importorskip("mpi4py")
-
     if "MPI_EXECUTOR_TYPE" not in os.environ:
         pytest.skip("No MPI executor specified.")
     mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
-
-    import pickle
-    calling_code = ("\'import sys; import pickle; pickle.loads(bytes.fromhex(\"" +
-                    pickle.dumps(test).hex() + "\"))()\'")
-
-    import sys
-    exit_code = mpi_exec([sys.executable, "-m", "mpi4py", __file__, calling_code],
-                num_tasks=num_tasks, num_nodes=num_nodes,
+    exit_code = mpi_exec.call(test, num_tasks=num_tasks, num_nodes=num_nodes,
                 tasks_per_node=tasks_per_node)
-
     assert not exit_code
 
 
