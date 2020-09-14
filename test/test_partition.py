@@ -27,7 +27,7 @@ THE SOFTWARE.
 
 from six.moves import range
 import numpy as np
-import pyopencl as cl
+import pyopencl as cl # noqa
 from functools import partial
 
 from meshmode.dof_array import thaw, flatten, unflatten, flat_norm
@@ -55,72 +55,130 @@ TAG_SEND_LOCAL_NODES = TAG_BASE + 4
 # {{{ This should go somewhere else
 
 import abc
+import subprocess
+
+
+class MPIExecutorParams:
+    def __init__(self, num_tasks=None, num_nodes=None, tasks_per_node=None,
+                gpus_per_task=None):
+        self._create_param_dict(num_tasks=num_tasks, num_nodes=num_nodes,
+                    tasks_per_node=tasks_per_node, gpus_per_task=gpus_per_task)
+
+    def _create_param_dict(self, **kwargs):
+        self.param_dict = {}
+        for name, value in kwargs.items():
+            if value is not None:
+                self.param_dict[name] = value
+
+
+class MPIExecutorParamError(RuntimeError):
+    def __init__(self, name):
+        self.name = name
+        super().__init__(f"MPI executor does not support parameter '{self.name}'.")
+
+
+class MPIExecError(RuntimeError):
+    def __init__(self, exit_code):
+        self.exit_code = exit_code
+        super().__init__(f"MPI execution failed with exit code {exit_code}.")
 
 
 class MPIExecutor(metaclass=abc.ABCMeta):
     @abc.abstractmethod
-    def __call__(self, command, num_tasks=None, num_nodes=None,
-                tasks_per_node=None):
+    def get_mpi_command(self, command, exec_params=None):
         pass
 
-    def exec_python(self, code_string, num_tasks=None, num_nodes=None,
-                tasks_per_node=None):
+    @abc.abstractmethod
+    def __call__(self, command, exec_params=None):
+        pass
+
+    def execute(self, code_string, exec_params=None):
         import sys
         return self.__call__([sys.executable, "-m", "mpi4py", "-c", code_string],
-                    num_tasks, num_nodes, tasks_per_node)
+                    exec_params)
 
-    def call(self, func, num_tasks=None, num_nodes=None, tasks_per_node=None):
+    def check_execute(self, code_string, exec_params=None):
+        exit_code = self.execute(code_string, exec_params)
+        if exit_code != 0:
+            raise MPIExecError(exit_code)
+
+    def call(self, func, exec_params=None):
         import pickle
         calling_code = ("\'import sys; import pickle; pickle.loads(bytes.fromhex(\""
                     + pickle.dumps(func).hex() + "\"))()\'")
-        return self.exec_python(calling_code, num_tasks, num_nodes, tasks_per_node)
+        return self.execute(calling_code, exec_params)
+
+    def check_call(self, func, exec_params=None):
+        exit_code = self.call(func, exec_params)
+        if exit_code != 0:
+            raise MPIExecError(exit_code)
 
 
 class BasicMPIExecutor(MPIExecutor):
-    def __call__(self, command, num_tasks=None, num_nodes=None,
-                tasks_per_node=None):
+    def get_mpi_command(self, command, exec_params=None):
         mpi_command = ["mpiexec"]
-        if num_tasks is not None:
-            mpi_command += ["-n", str(num_tasks)]
-        else:
-            # mpiexec doesn't really support setting node counts, but
-            # we can launch the equivalent number of tasks
-            if num_nodes is not None:
-                if tasks_per_node is not None:
-                    mpi_command += ["-n", str(num_nodes*tasks_per_node)]
-                else:
-                    from multiprocessing import cpu_count
-                    mpi_command += ["-n", str(num_nodes*cpu_count())]
+        param_dict = {}
+        if exec_params is not None:
+            param_dict = exec_params.param_dict
+        for name, value in param_dict.items():
+            if name == "num_tasks":
+                mpi_command += ["-n", str(value)]
+            else:
+                raise MPIExecutorParamError(name)
         mpi_command += command
-        return os.system(" ".join(mpi_command))
+        return mpi_command
+
+    def __call__(self, command, exec_params=None):
+        mpi_command = self.get_mpi_command(command, exec_params)
+        return subprocess.call(" ".join(mpi_command), shell=True)
 
 
 class SlurmMPIExecutor(MPIExecutor):
-    def __call__(self, command, num_tasks=None, num_nodes=None,
-                tasks_per_node=None):
+    def get_mpi_command(self, command, exec_params=None):
         mpi_command = ["srun"]
-        if num_tasks is not None:
-            mpi_command += ["-n", str(num_tasks)]
-        if num_nodes is not None:
-            mpi_command += ["-N", str(num_nodes)]
-        if tasks_per_node is not None:
-            mpi_command += [f"--ntasks-per-node={tasks_per_node}"]
+        param_dict = {}
+        if exec_params is not None:
+            param_dict = exec_params.param_dict
+        for name, value in param_dict.items():
+            if name == "num_tasks":
+                mpi_command += ["-n", str(value)]
+            elif name == "num_nodes":
+                mpi_command += ["-N", str(value)]
+            elif name == "tasks_per_node":
+                mpi_command += [f"--ntasks-per-node={value}"]
+            else:
+                raise MPIExecutorParamError(name)
         mpi_command += command
-        return os.system(" ".join(mpi_command))
+        return mpi_command
+
+    def __call__(self, command, exec_params=None):
+        mpi_command = self.get_mpi_command(command, exec_params)
+        return subprocess.call(" ".join(mpi_command), shell=True)
 
 
 class LCLSFMPIExecutor(MPIExecutor):
-    def __call__(self, command, num_tasks=None, num_nodes=None,
-                tasks_per_node=None):
+    def get_mpi_command(self, command, exec_params=None):
         mpi_command = ["lrun"]
-        if num_tasks is not None:
-            mpi_command += ["-n", str(num_tasks)]
-        if num_nodes is not None:
-            mpi_command += ["-N", str(num_nodes)]
-        if tasks_per_node is not None:
-            mpi_command += ["-T", str(tasks_per_node)]
+        param_dict = {}
+        if exec_params is not None:
+            param_dict = exec_params.param_dict
+        for name, value in param_dict.items():
+            if name == "num_tasks":
+                mpi_command += ["-n", str(value)]
+            elif name == "num_nodes":
+                mpi_command += ["-N", str(value)]
+            elif name == "tasks_per_node":
+                mpi_command += ["-T", str(value)]
+            elif name == "gpus_per_task":
+                mpi_command += ["-g", str(value)]
+            else:
+                raise MPIExecutorParamError(name)
         mpi_command += command
-        return os.system(" ".join(mpi_command))
+        return mpi_command
+
+    def __call__(self, command, exec_params=None):
+        mpi_command = self.get_mpi_command(command, exec_params)
+        return subprocess.call(" ".join(mpi_command), shell=True)
 
 
 def make_mpi_executor(executor_type):
@@ -134,14 +192,10 @@ def make_mpi_executor(executor_type):
 # }}}
 
 
-def run_mpi_test(test, num_tasks=None, num_nodes=None, tasks_per_node=None):
-    pytest.importorskip("mpi4py")
+def get_test_mpi_executor():
     if "MPI_EXECUTOR_TYPE" not in os.environ:
         pytest.skip("No MPI executor specified.")
-    mpi_exec = make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
-    exit_code = mpi_exec.call(test, num_tasks=num_tasks, num_nodes=num_nodes,
-                tasks_per_node=tasks_per_node)
-    assert not exit_code
+    return make_mpi_executor(os.environ["MPI_EXECUTOR_TYPE"])
 
 
 # {{{ partition_interpolation
@@ -427,8 +481,11 @@ def count_tags(mesh, tag):
 
 # {{{ MPI test boundary swap
 
-def _test_mpi_boundary_swap(actx_factory, dim, order, num_groups):
+def _test_mpi_boundary_swap(actx_factory, order):
     from meshmode.distributed import MPIMeshDistributor, MPIBoundaryCommSetupHelper
+
+    dim = 2
+    num_groups = 2
 
     from mpi4py import MPI
     mpi_comm = MPI.COMM_WORLD
@@ -614,11 +671,29 @@ def _test_data_transfer(mpi_comm, actx, local_bdry_conns,
         assert err < 1e-11, "Error = %f is too large" % err
 
 
-@pytest.mark.parametrize("num_parts", [3, 4])
 @pytest.mark.parametrize("order", [2, 3])
-def test_mpi_boundary_swap(actx_factory, num_parts, order):
-    run_mpi_test(partial(_test_mpi_boundary_swap, actx_factory=actx_factory, dim=2,
-                num_groups=2, order=order), num_tasks=num_parts)
+@pytest.mark.parametrize("num_parts", [3, 4])
+def test_mpi_boundary_swap(actx_factory, order, num_parts):
+    pytest.importorskip("mpi4py")
+    mpi_exec = get_test_mpi_executor()
+    mpi_exec.check_call(partial(_test_mpi_boundary_swap, actx_factory, order),
+                exec_params=MPIExecutorParams(num_tasks=num_parts))
+
+# }}}
+
+
+# {{{ Example test with multiple GPUs
+
+@pytest.mark.parametrize("num_gpus", [1, 2])
+def test_mpi_boundary_swap_with_gpus(actx_factory, num_gpus):
+    pytest.importorskip("mpi4py")
+    mpi_exec = get_test_mpi_executor()
+    try:
+        mpi_exec.check_call(partial(_test_mpi_boundary_swap, actx_factory, order=3),
+                    exec_params=MPIExecutorParams(num_nodes=1,
+                                tasks_per_node=num_gpus, gpus_per_task=1))
+    except MPIExecutorParamError as e:
+        pytest.skip(str(e))
 
 # }}}
 
