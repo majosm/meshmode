@@ -40,6 +40,8 @@ from meshmode.discretization.poly_element import (
         PolynomialWarpAndBlendGroupFactory)
 from meshmode.mesh import BTAG_ALL
 
+from pytools.mpi import make_mpi_executor, MPIExecutorParams, MPIExecutorParamError
+
 import pytest
 import os
 
@@ -51,145 +53,6 @@ logger = logging.getLogger(__name__)
 TAG_BASE = 83411
 TAG_SEND_REMOTE_NODES = TAG_BASE + 3
 TAG_SEND_LOCAL_NODES = TAG_BASE + 4
-
-# {{{ This should go somewhere else
-
-import abc
-import subprocess
-
-
-class MPIExecutorParams:
-    def __init__(self, num_tasks=None, num_nodes=None, tasks_per_node=None,
-                gpus_per_task=None):
-        self._create_param_dict(num_tasks=num_tasks, num_nodes=num_nodes,
-                    tasks_per_node=tasks_per_node, gpus_per_task=gpus_per_task)
-
-    def _create_param_dict(self, **kwargs):
-        self.param_dict = {}
-        for name, value in kwargs.items():
-            if value is not None:
-                self.param_dict[name] = value
-
-
-class MPIExecutorParamError(RuntimeError):
-    def __init__(self, name):
-        self.name = name
-        super().__init__(f"MPI executor does not support parameter '{self.name}'.")
-
-
-class MPIExecError(RuntimeError):
-    def __init__(self, exit_code):
-        self.exit_code = exit_code
-        super().__init__(f"MPI execution failed with exit code {exit_code}.")
-
-
-class MPIExecutor(metaclass=abc.ABCMeta):
-    @abc.abstractmethod
-    def get_mpi_command(self, command, exec_params=None):
-        pass
-
-    @abc.abstractmethod
-    def __call__(self, command, exec_params=None):
-        pass
-
-    def execute(self, code_string, exec_params=None):
-        import sys
-        return self.__call__([sys.executable, "-m", "mpi4py", "-c", code_string],
-                    exec_params)
-
-    def check_execute(self, code_string, exec_params=None):
-        exit_code = self.execute(code_string, exec_params)
-        if exit_code != 0:
-            raise MPIExecError(exit_code)
-
-    def call(self, func, exec_params=None):
-        import pickle
-        calling_code = ("\'import sys; import pickle; pickle.loads(bytes.fromhex(\""
-                    + pickle.dumps(func).hex() + "\"))()\'")
-        return self.execute(calling_code, exec_params)
-
-    def check_call(self, func, exec_params=None):
-        exit_code = self.call(func, exec_params)
-        if exit_code != 0:
-            raise MPIExecError(exit_code)
-
-
-class BasicMPIExecutor(MPIExecutor):
-    def get_mpi_command(self, command, exec_params=None):
-        mpi_command = ["mpiexec"]
-        param_dict = {}
-        if exec_params is not None:
-            param_dict = exec_params.param_dict
-        for name, value in param_dict.items():
-            if name == "num_tasks":
-                mpi_command += ["-n", str(value)]
-            else:
-                raise MPIExecutorParamError(name)
-        mpi_command += command
-        return mpi_command
-
-    def __call__(self, command, exec_params=None):
-        mpi_command = self.get_mpi_command(command, exec_params)
-        return subprocess.call(" ".join(mpi_command), shell=True)
-
-
-class SlurmMPIExecutor(MPIExecutor):
-    def get_mpi_command(self, command, exec_params=None):
-        mpi_command = ["srun"]
-        param_dict = {}
-        if exec_params is not None:
-            param_dict = exec_params.param_dict
-        for name, value in param_dict.items():
-            if name == "num_tasks":
-                mpi_command += ["-n", str(value)]
-            elif name == "num_nodes":
-                mpi_command += ["-N", str(value)]
-            elif name == "tasks_per_node":
-                mpi_command += [f"--ntasks-per-node={value}"]
-            else:
-                raise MPIExecutorParamError(name)
-        mpi_command += command
-        return mpi_command
-
-    def __call__(self, command, exec_params=None):
-        mpi_command = self.get_mpi_command(command, exec_params)
-        return subprocess.call(" ".join(mpi_command), shell=True)
-
-
-class LCLSFMPIExecutor(MPIExecutor):
-    def get_mpi_command(self, command, exec_params=None):
-        mpi_command = ["lrun"]
-        param_dict = {}
-        if exec_params is not None:
-            param_dict = exec_params.param_dict
-        for name, value in param_dict.items():
-            if name == "num_tasks":
-                mpi_command += ["-n", str(value)]
-            elif name == "num_nodes":
-                mpi_command += ["-N", str(value)]
-            elif name == "tasks_per_node":
-                mpi_command += ["-T", str(value)]
-            elif name == "gpus_per_task":
-                mpi_command += ["-g", str(value)]
-            else:
-                raise MPIExecutorParamError(name)
-        mpi_command += command
-        return mpi_command
-
-    def __call__(self, command, exec_params=None):
-        mpi_command = self.get_mpi_command(command, exec_params)
-        return subprocess.call(" ".join(mpi_command), shell=True)
-
-
-def make_mpi_executor(executor_type):
-    type_map = {
-        "basic": BasicMPIExecutor,
-        "slurm": SlurmMPIExecutor,
-        "lclsf": LCLSFMPIExecutor
-    }
-    return type_map[executor_type]()
-
-# }}}
 
 
 def get_test_mpi_executor():
