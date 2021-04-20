@@ -254,9 +254,11 @@ def test_modal_truncation(actx_factory, nodal_group_factory,
     for mesh_par in mesh_pars:
 
         # Make the mesh
-        mesh = mgen.generate_warped_rect_mesh(dim, order=order,
-                                              nelements_side=mesh_par,
-                                              group_cls=group_cls)
+        mesh = mgen.generate_warped_rect_mesh(
+            a=(-0.5,)*dim, b=(0.5,)*dim,
+            nelements_per_axis=(mesh_par,)*dim,
+            order=order,
+            group_cls=group_cls)
         h = 1/mesh_par
 
         # Make discretizations

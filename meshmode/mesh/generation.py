@@ -1013,38 +1013,42 @@ def generate_regular_rect_mesh(a=(0, 0), b=(1, 1), *, nelements_per_axis=None,
 
 # {{{ generate_warped_rect_mesh
 
-def generate_warped_rect_mesh(dim, order, *, nelements_side=None,
-        npoints_side=None, group_cls=None, n=None):
-    """Generate a mesh of a warped square/cube. Mainly useful for testing
-    functionality with curvilinear meshes.
+def generate_warped_rect_mesh(a, b, *, nelements_per_axis=None,
+                              npoints_per_axis=None,
+                              order=1,
+                              boundary_tag_to_face=None,
+                              group_cls=None,
+                              mesh_type=None,
+                              n=None,
+                              ):
+    """Generate a mesh of a warped box.
+
+    :param a: the lower left hand point of the unwarped box.
+    :param b: the upper right hand point of the unwarped box.
+    :param nelements_per_axis: an optional tuple of integers indicating the
+        number of elements along each axis.
+    :param npoints_per_axis: an optional tuple of integers indicating the
+        number of points along each axis.
+    :param order: the mesh element order.
+    :param boundary_tag_to_face: an optional dictionary for tagging boundaries.
+        See :func:`generate_box_mesh`.
+    :param group_cls: see :func:`generate_box_mesh`.
+    :param mesh_type: see :func:`generate_box_mesh`.
+
+    .. note::
+
+        Specify only one of *nelements_per_axis* and *npoints_per_axis*.
     """
-    if n is not None:
-        from warnings import warn
-        warn("n parameter to generate_warped_rect_mesh is deprecated. Use "
-                "nelements_side or npoints_side instead. n will disappear "
-                "in 2022.", DeprecationWarning, stacklevel=2)
-        if nelements_side is not None:
-            raise TypeError("cannot specify both nelements_side and n")
-        if npoints_side is not None:
-            raise TypeError("cannot specify both npoints_side and n")
-        npoints_side = n
-    else:
-        if npoints_side is not None:
-            if nelements_side is not None:
-                raise TypeError("cannot specify both nelements_side and "
-                    "npoints_side")
-        elif nelements_side is not None:
-            npoints_side = nelements_side + 1
-
-    assert dim in [2, 3]
-
-    npoints_per_axis = (npoints_side,)*dim if npoints_side is not None else None
+    dim = len(a)
 
     mesh = generate_regular_rect_mesh(
             a=(-0.5,)*dim, b=(0.5,)*dim,
-            npoints_per_axis=npoints_per_axis, order=order, group_cls=group_cls)
+            npoints_per_axis=npoints_per_axis,
+            nelements_per_axis=nelements_per_axis,
+            order=order, boundary_tag_to_face=boundary_tag_to_face,
+            group_cls=group_cls, mesh_type=mesh_type, n=n)
 
-    def m(x):
+    def warp(x):
         result = np.empty_like(x)
         result[0] = (
                 1.5*x[0] + np.cos(x[0])
@@ -1054,6 +1058,15 @@ def generate_warped_rect_mesh(dim, order, *, nelements_side=None,
                 + 1.3*x[1] + np.sin(x[1]))
         if len(x) == 3:
             result[2] = x[2] + np.sin(x[0] / 2) / 2
+        return result
+
+    def m(x):
+        warped_x = warp(x)
+        warped_origin = warp(np.array([[0]]*dim))
+        centered_warped_x = warped_x - warped_origin
+        a_np = np.array([a]).T
+        b_np = np.array([b]).T
+        result = a_np*(0.5 - centered_warped_x) + b_np*(0.5 + centered_warped_x)
         return result
 
     from meshmode.mesh.processing import map_mesh

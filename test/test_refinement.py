@@ -228,8 +228,11 @@ def test_refinement_connection(
             # FIXME: Leftover from n -> nelements_per_axis/npoints_per_axis change;
             # should be nelements_per_axis, but if changed EOC order dips below
             # threshold and test fails. Likely just need to tweak mesh sizes.
-            mesh = mgen.generate_warped_rect_mesh(dim, order=mesh_order,
-                    npoints_side=mesh_par, group_cls=group_cls)
+            mesh = mgen.generate_warped_rect_mesh(
+                    a=(-0.5,)*dim, b=(0.5,)*dim,
+                    npoints_per_axis=(mesh_par,)*dim,
+                    order=mesh_order,
+                    group_cls=group_cls)
             h = 1/mesh_par
         else:
             raise ValueError("mesh_name not recognized")

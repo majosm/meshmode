@@ -63,8 +63,8 @@ def create_discretization(actx, ndim,
             mesh = generate_torus(10.0, 5.0, order=order,
                     n_minor=nelements, n_major=nelements)
         elif mesh_name == "warp":
-            mesh = generate_warped_rect_mesh(ndim, order=order,
-                    nelements_side=nelements)
+            mesh = generate_warped_rect_mesh(a=(-0.5,)*ndim, b=(0.5,)*ndim,
+                    order=order, nelements_per_axis=(nelements,)*ndim)
         else:
             raise ValueError(f"unknown mesh name: {mesh_name}")
     else:

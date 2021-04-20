@@ -435,8 +435,8 @@ def test_from_fd_transfer(ctx_factory, fspace_degree,
         elif fdrake_mesh_name == "warp":
             from meshmode.mesh.generation import generate_warped_rect_mesh
             from meshmode.interop.firedrake import export_mesh_to_firedrake
-            mm_mesh = generate_warped_rect_mesh(dim, order=4,
-                nelements_side=mesh_par)
+            mm_mesh = generate_warped_rect_mesh(a=(-0.5,)*dim, b=(0.5,)*dim,
+                nelements_per_axis=(mesh_par,)*dim, order=4)
             fdrake_mesh, _, _ = export_mesh_to_firedrake(mm_mesh)
             h = 1/mesh_par
         else:
@@ -532,8 +532,8 @@ def test_to_fd_transfer(ctx_factory, fspace_degree, mesh_name, mesh_pars, dim):
             h = float(mesh_par)
         elif mesh_name == "warp":
             from meshmode.mesh.generation import generate_warped_rect_mesh
-            mm_mesh = generate_warped_rect_mesh(dim, order=4,
-                nelements_side=mesh_par)
+            mm_mesh = generate_warped_rect_mesh(a=(-0.5,)*dim, b=(0.5,)*dim,
+                nelements_per_axis=(mesh_par,)*dim, order=4)
             h = 1/mesh_par
         else:
             raise ValueError("mesh_name not recognized")

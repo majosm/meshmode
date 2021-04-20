@@ -72,7 +72,10 @@ def test_partition_interpolation(actx_factory, dim, mesh_pars,
 
     for n in mesh_pars:
         from meshmode.mesh.generation import generate_warped_rect_mesh
-        base_mesh = generate_warped_rect_mesh(dim, order=order, nelements_side=n)
+        base_mesh = generate_warped_rect_mesh(
+            a=(-0.5,)*dim, b=(0.5,)*dim,
+            nelements_per_axis=(n,)*dim,
+            order=order)
 
         if num_groups > 1:
             from meshmode.mesh.processing import split_mesh_groups
@@ -326,8 +329,11 @@ def _test_mpi_boundary_swap(dim, order, num_groups):
     if mesh_dist.is_mananger_rank():
         np.random.seed(42)
         from meshmode.mesh.generation import generate_warped_rect_mesh
-        meshes = [generate_warped_rect_mesh(dim, order=order, nelements_side=4)
-                        for _ in range(num_groups)]
+        meshes = [generate_warped_rect_mesh(
+                      a=(-0.5,)*dim, b=(0.5,)*dim,
+                      nelements_per_axis=(4,)*dim,
+                      order=order)
+                  for _ in range(num_groups)]
 
         if num_groups > 1:
             from meshmode.mesh.processing import merge_disjoint_meshes
