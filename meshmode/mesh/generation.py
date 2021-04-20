@@ -1062,11 +1062,13 @@ def generate_warped_rect_mesh(a, b, *, nelements_per_axis=None,
 
     def m(x):
         warped_x = warp(x)
-        warped_origin = warp(np.array([[0]]*dim))
-        centered_warped_x = warped_x - warped_origin
+        warped_lower = warp(np.array([[-0.5]]*dim))
+        warped_upper = warp(np.array([[0.5]]*dim))
+        normalized_warped_x = (
+            (warped_x - warped_lower)/(warped_upper - warped_lower) - 0.5)
         a_np = np.array([a]).T
         b_np = np.array([b]).T
-        result = a_np*(0.5 - centered_warped_x) + b_np*(0.5 + centered_warped_x)
+        result = a_np*(0.5 - normalized_warped_x) + b_np*(0.5 + normalized_warped_x)
         return result
 
     from meshmode.mesh.processing import map_mesh
