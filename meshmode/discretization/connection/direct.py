@@ -459,6 +459,11 @@ class DirectDiscretizationConnection(DiscretizationConnection):
 
                 else:
                     print(f"{batch_pick_knl()=}")
+                    from_element_indices = batch._global_from_element_indices(
+                        actx, self.to_discr.groups[i_tgrp])
+                    print(f"{point_pick_indices=}")
+                    print(f"{from_element_indices=}")
+                    print(f"{self.to_discr.groups[i_tgrp].nunit_dofs=}")
                     batch_result = actx.call_loopy(
                         batch_pick_knl(),
                         pick_list=point_pick_indices,
