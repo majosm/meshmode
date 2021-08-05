@@ -355,11 +355,11 @@ class DirectDiscretizationConnection(DiscretizationConnection):
         if ary.shape != (len(self.from_discr.groups),):
             raise ValueError("invalid shape of incoming resampling data")
 
-        if (ary.array_context.permits_inplace_modification
-                and not _force_no_inplace_updates):
-            return self._apply_with_inplace_updates(ary)
-        else:
-            return self._apply_without_inplace_updates(ary)
+#         if (ary.array_context.permits_inplace_modification
+#                 and not _force_no_inplace_updates):
+#             return self._apply_with_inplace_updates(ary)
+#         else:
+        return self._apply_without_inplace_updates(ary)
 
     # {{{ _apply_without_inplace_updates
 
