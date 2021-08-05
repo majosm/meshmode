@@ -355,6 +355,10 @@ class DirectDiscretizationConnection(DiscretizationConnection):
         if ary.shape != (len(self.from_discr.groups),):
             raise ValueError("invalid shape of incoming resampling data")
 
+        print(f"{ary.array_context.permits_inplace_modification=}")
+        print(f"{_force_no_inplace_updates=}")
+        print("")
+
         if (ary.array_context.permits_inplace_modification
                 and not _force_no_inplace_updates):
             return self._apply_with_inplace_updates(ary)
@@ -367,9 +371,12 @@ class DirectDiscretizationConnection(DiscretizationConnection):
         from meshmode.dof_array import DOFArray
         actx = ary.array_context
 
+        print("_apply_without_inplace_updates")
+
         @memoize_in(actx,
                 (DirectDiscretizationConnection, "resample_by_mat_knl"))
         def batch_mat_knl():
+            print("_apply_without_inplace_updates.batch_mat_knl")
             t_unit = make_loopy_program(
                 [
                     "{[iel]: 0 <= iel < nelements}",
@@ -400,6 +407,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
         @memoize_in(actx,
                 (DirectDiscretizationConnection, "resample_by_picking_knl"))
         def batch_pick_knl():
+            print("_apply_without_inplace_updates.batch_pick_knl")
             t_unit = make_loopy_program(
                 [
                     "{[iel]: 0 <= iel < nelements}",
@@ -437,6 +445,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                         actx, i_tgrp, i_batch)
 
                 if point_pick_indices is None:
+                    print(f"{batch_mat_knl()=}")
                     batch_result = actx.call_loopy(
                         batch_mat_knl(),
                         resample_mat=self._resample_matrix(
@@ -449,6 +458,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                     )["result"]
 
                 else:
+                    print(f"{batch_pick_knl()=}")
                     batch_result = actx.call_loopy(
                         batch_pick_knl(),
                         pick_list=point_pick_indices,
@@ -463,8 +473,10 @@ class DirectDiscretizationConnection(DiscretizationConnection):
             # After computing each batched result, take the sum
             # to get the entire contribution over the group
             if batched_data:
+                print("has batched_data")
                 group_data.append(sum(batched_data))
             else:
+                print("does not have batched_data")
                 # If no batched data at all, return zeros for this
                 # particular group array
                 group_data.append(
@@ -475,6 +487,8 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                     )
                 )
 
+        print("")
+
         return DOFArray(actx, data=tuple(group_data))
 
     # }}}
@@ -484,9 +498,12 @@ class DirectDiscretizationConnection(DiscretizationConnection):
     def _apply_with_inplace_updates(self, ary):
         actx = ary.array_context
 
+        print("_apply_with_inplace_updates")
+
         @memoize_in(actx, (DirectDiscretizationConnection,
             "resample_by_mat_knl_inplace"))
         def mat_knl():
+            print("_apply_with_inplace_updates.mat_knl")
             t_unit = make_loopy_program(
                 """{[iel, idof, j]:
                     0<=iel<nelements and
@@ -515,6 +532,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
         @memoize_in(actx,
                 (DirectDiscretizationConnection, "resample_by_picking_knl_inplace"))
         def pick_knl():
+            print("_apply_with_inplace_updates.pick_knl")
             t_unit = make_loopy_program(
                 """{[iel, idof]:
                     0<=iel<nelements and
@@ -553,6 +571,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                         actx, i_tgrp, i_batch)
 
                 if point_pick_indices is None:
+                    print(f"{mat_knl()=}")
                     actx.call_loopy(mat_knl(),
                             resample_mat=self._resample_matrix(
                                 actx, i_tgrp, i_batch),
@@ -562,12 +581,15 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                             to_element_indices=batch.to_element_indices)
 
                 else:
+                    print(f"{pick_knl()=}")
                     actx.call_loopy(pick_knl(),
                             pick_list=point_pick_indices,
                             result=result[i_tgrp],
                             ary=ary[batch.from_group_index],
                             from_element_indices=batch.from_element_indices,
                             to_element_indices=batch.to_element_indices)
+
+        print("")
 
         return result
 
