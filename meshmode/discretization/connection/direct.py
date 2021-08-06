@@ -144,9 +144,11 @@ class InterpolationBatch:
                 ],
                 name="compose_index_maps",
             )
-            return lp.tag_inames(t_unit, {
+            t_unit = lp.tag_inames(t_unit, {
                 "iel_init": ConcurrentElementInameTag(),
                 "iel": ConcurrentElementInameTag()})
+            t_unit = lp.set_options(t_unit, "write_code")
+            return t_unit
 
         from_element_indices = actx.to_numpy(self.from_element_indices)
         to_element_indices = actx.to_numpy(self.to_element_indices)
