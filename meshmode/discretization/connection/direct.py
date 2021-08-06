@@ -148,12 +148,17 @@ class InterpolationBatch:
                 "iel_init": ConcurrentElementInameTag(),
                 "iel": ConcurrentElementInameTag()})
 
+        from_element_indices = actx.to_numpy(self.from_element_indices)
+        to_element_indices = actx.to_numpy(self.to_element_indices)
+        print(f"{from_element_indices=}")
+        print(f"{to_element_indices=}")
         result = actx.freeze(actx.call_loopy(
             compose_index_maps_kernel(),
             from_element_indices=self.from_element_indices,
             to_element_indices=self.to_element_indices,
             nelements_result=to_group.nelements,
         )["global_from_element_indices"])
+        print(f"result={actx.to_numpy(result)}")
 
         self._global_from_element_indices_cache = result
         return result
