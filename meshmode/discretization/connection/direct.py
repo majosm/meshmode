@@ -119,8 +119,8 @@ class InterpolationBatch:
         :arg to_group: The :class:`~meshmode.discretization.ElementGroup`
             that holds the result of this interpolation batch.
         """
-        if self._global_from_element_indices_cache is not None:
-            return self._global_from_element_indices_cache
+#         if self._global_from_element_indices_cache is not None:
+#             return self._global_from_element_indices_cache
 
         @memoize_in(actx, (InterpolationBatch._global_from_element_indices,
             "compose_index_maps_kernel"))
