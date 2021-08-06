@@ -148,6 +148,7 @@ class InterpolationBatch:
                 "iel_init": ConcurrentElementInameTag(),
                 "iel": ConcurrentElementInameTag()})
             t_unit = lp.set_options(t_unit, "write_code")
+            print(t_unit)
             return t_unit
 
         from_element_indices = actx.to_numpy(self.from_element_indices)
