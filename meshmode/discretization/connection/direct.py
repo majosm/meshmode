@@ -449,6 +449,16 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                     )["result"]
 
                 else:
+                    print("without_inplace")
+                    print(f"{i_batch=}")
+                    pick_list = actx.to_numpy(point_pick_indices)
+                    print(f"{pick_list=}")
+                    from_element_indices = actx.to_numpy(
+                        batch._global_from_element_indices(
+                            actx, self.to_discr.groups[i_tgrp]))
+                    print(f"{from_element_indices=}")
+                    n_to_nodes = self.to_discr.groups[i_tgrp].nunit_dofs
+                    print(f"{n_to_nodes=}")
                     batch_result = actx.call_loopy(
                         batch_pick_knl(),
                         pick_list=point_pick_indices,
@@ -457,6 +467,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                             actx, self.to_discr.groups[i_tgrp]),
                         n_to_nodes=self.to_discr.groups[i_tgrp].nunit_dofs
                     )["result"]
+                    print("")
 
                 batched_data.append(batch_result)
 
@@ -562,12 +573,20 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                             to_element_indices=batch.to_element_indices)
 
                 else:
+                    print("with_inplace")
+                    pick_list = actx.to_numpy(point_pick_indices)
+                    print(f"{pick_list=}")
+                    from_element_indices = actx.to_numpy(batch.from_element_indices)
+                    print(f"{from_element_indices=}")
+                    n_to_nodes = result[i_tgrp].shape[1]
+                    print(f"{n_to_nodes=}")
                     actx.call_loopy(pick_knl(),
                             pick_list=point_pick_indices,
                             result=result[i_tgrp],
                             ary=ary[batch.from_group_index],
                             from_element_indices=batch.from_element_indices,
                             to_element_indices=batch.to_element_indices)
+                    print("")
 
         return result
 
