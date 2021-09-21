@@ -27,12 +27,6 @@ from modepy.tools import hypercube_submesh
 from pytools.spatial_btree import SpatialBinaryTreeBucket
 from pytools import MovedFunctionDeprecationWrapper
 
-__doc__ = """
-.. currentmodule:: meshmode
-
-.. autoclass:: AffineMap
-"""
-
 
 # {{{ make_element_lookup_tree
 

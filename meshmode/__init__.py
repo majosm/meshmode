@@ -25,6 +25,8 @@ __doc__ = """
 .. exception:: Error
 .. exception:: DataUnavailable
 .. exception:: FileExistsError
+
+.. autoclass:: AffineMap
 """
 
 from builtins import FileExistsError  # noqa: F401
