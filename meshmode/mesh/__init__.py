@@ -441,8 +441,10 @@ class FacialAdjacencyGroup(Record):
     .. attribute:: igroup
     """
 
-    def __init__(self, igroup, **kwargs):
-        super().__init__(igroup=igroup, **kwargs)
+    def __init__(self, igroup, extra_fields=None):
+        if extra_fields is None:
+            extra_fields = {}
+        super().__init__(igroup=igroup, **extra_fields)
 
     def __eq__(self, other):
         return (
@@ -517,19 +519,22 @@ class InteriorAdjacencyGroup(FacialAdjacencyGroup):
             elements, element_faces,
             neighbors, neighbor_faces,
             aff_map=None,
-            **kwargs):
+            extra_fields=None):
         if aff_map is None:
             aff_map = AffineMap()
 
-        super().__init__(
-            # FacialAdjacencyGroup
-            igroup=igroup,
-            # InteriorAdjacencyGroup
-            ineighbor_group=ineighbor_group,
-            elements=elements, element_faces=element_faces,
-            neighbors=neighbors, neighbor_faces=neighbor_faces,
-            aff_map=aff_map,
-            **kwargs)
+        if extra_fields is None:
+            extra_fields = {}
+        extra_fields.update({
+            "ineighbor_group": ineighbor_group,
+            "elements": elements,
+            "element_faces": element_faces,
+            "neighbors": neighbors,
+            "neighbor_faces": neighbor_faces,
+            "aff_map": aff_map,
+        })
+
+        super().__init__(igroup, extra_fields=extra_fields)
 
     def __eq__(self, other):
         return (
@@ -579,6 +584,20 @@ class BoundaryAdjacencyGroup(FacialAdjacencyGroup):
         ``face_id_t [nfagrp_elements]``. ``element_faces[i]`` gives the face
         index of the boundary face in element ``elements[i]``.
     """
+
+    def __init__(self, igroup, *,
+            boundary_tag,
+            elements, element_faces,
+            extra_fields=None):
+        if extra_fields is None:
+            extra_fields = {}
+        extra_fields.update({
+            "boundary_tag": boundary_tag,
+            "elements": elements,
+            "element_faces": element_faces,
+        })
+
+        super().__init__(igroup, extra_fields=extra_fields)
 
     def __eq__(self, other):
         return (
@@ -660,21 +679,23 @@ class InterPartitionAdjacencyGroup(BoundaryAdjacencyGroup):
             ineighbor_partition,
             neighbors, neighbor_faces,
             aff_map=None,
-            **kwargs):
+            extra_fields=None):
         if aff_map is None:
             aff_map = AffineMap()
 
-        super().__init__(
-            # FacialAdjacencyGroup
-            igroup=igroup,
-            # BoundaryAdjacencyGroup
+        if extra_fields is None:
+            extra_fields = {}
+        extra_fields.update({
+            "ineighbor_partition": ineighbor_partition,
+            "neighbors": neighbors,
+            "neighbor_faces": neighbor_faces,
+            "aff_map": aff_map,
+        })
+
+        super().__init__(igroup,
             boundary_tag=BTAG_PARTITION(ineighbor_partition),
             elements=elements, element_faces=element_faces,
-            # InterPartitionAdjacencyGroup
-            ineighbor_partition=ineighbor_partition,
-            neighbors=neighbors, neighbor_faces=neighbor_faces,
-            aff_map=aff_map,
-            **kwargs)
+            extra_fields=extra_fields)
 
     def __eq__(self, other):
         return (
