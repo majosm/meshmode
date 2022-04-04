@@ -29,7 +29,8 @@ import modepy as mp
 
 from arraycontext import (
         NotAnArrayContainerError, serialize_container, deserialize_container)
-from meshmode.transform_metadata import FirstAxisIsElementsTag
+from meshmode.transform_metadata import (FirstAxisIsElementsTag,
+                                         DiscretizationDOFAxisTag)
 from meshmode.discretization import InterpolatoryElementGroupBase
 from meshmode.discretization.poly_element import QuadratureSimplexElementGroup
 from meshmode.discretization.connection.direct import DiscretizationConnection
@@ -163,7 +164,9 @@ class NodalToModalDiscretizationConnection(DiscretizationConnection):
             return actx.from_numpy(vdm_inv)
 
         return actx.einsum("ij,ej->ei",
-                           vandermonde_inverse(grp),
+                           actx.tag_axis(0,
+                                         DiscretizationDOFAxisTag(),
+                                         vandermonde_inverse(grp)),
                            ary,
                            tagged=(FirstAxisIsElementsTag(),))
 
