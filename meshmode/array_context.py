@@ -27,12 +27,14 @@ THE SOFTWARE.
 
 import sys
 from warnings import warn
+from typing import Mapping, Sequence, Union
 from arraycontext import PyOpenCLArrayContext as PyOpenCLArrayContextBase
 from arraycontext import PytatoPyOpenCLArrayContext as PytatoPyOpenCLArrayContextBase
 from arraycontext.pytest import (
         _PytestPyOpenCLArrayContextFactoryWithClass,
         _PytestPytatoPyOpenCLArrayContextFactory,
         register_pytest_array_context_factory)
+from pytools.tag import Tag
 
 
 def thaw(actx, ary):
@@ -235,6 +237,27 @@ class PyOpenCLArrayContext(PyOpenCLArrayContextBase):
 # {{{ pytato pyopencl array context subclass
 
 class PytatoPyOpenCLArrayContext(PytatoPyOpenCLArrayContextBase):
+    def transform_dag(self, dag):
+        dag = super().transform_dag(dag)
+
+        # {{{ /!\ Remove tags from NamedArrays
+        # See <https://www.github.com/inducer/pytato/issues/195>
+
+        import pytato as pt
+
+        def untag_loopy_call_results(expr):
+            if isinstance(expr, pt.NamedArray):
+                return expr.copy(tags=frozenset(),
+                                 axes=(pt.Axis(frozenset()),)*expr.ndim)
+            else:
+                return expr
+
+        dag = pt.transform.map_and_copy(dag, untag_loopy_call_results)
+
+        # }}}
+
+        return dag
+
     def transform_loopy_program(self, t_unit):
         # FIXME: Do not parallelize for now.
         return t_unit
@@ -325,5 +348,20 @@ else:
 
 # }}}
 
+
+# {{{ tagging helpers
+
+def tag_axes(ary, actx, dim_to_tags: Mapping[int, Union[Sequence[Tag], Tag]]
+             ):
+    """
+    Return a copy of *ary* with the axes in *dim_to_tags* tagged with their
+    corresponding tags.
+    """
+    for iaxis, tags in dim_to_tags.items():
+        ary = actx.tag_axis(iaxis, tags, ary)
+
+    return ary
+
+# }}}
 
 # vim: foldmethod=marker

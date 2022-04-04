@@ -40,13 +40,16 @@ from arraycontext import ArrayContext, make_loopy_program
 from pytools import memoize_in, memoize_method, keyed_memoize_in
 from pytools.obj_array import make_obj_array
 from meshmode.transform_metadata import (
-        ConcurrentElementInameTag, ConcurrentDOFInameTag, FirstAxisIsElementsTag)
+        ConcurrentElementInameTag, ConcurrentDOFInameTag,
+        FirstAxisIsElementsTag, DiscretizationElementAxisTag,
+        DiscretizationDOFAxisTag)
 
 # underscored because it shouldn't be imported from here.
 from meshmode.dof_array import DOFArray as _DOFArray
 from meshmode.mesh import (
         Mesh as _Mesh,
         MeshElementGroup as _MeshElementGroup)
+from meshmode.array_context import tag_axes
 
 
 __doc__ = """
@@ -542,9 +545,13 @@ class Discretization:
         else:
             dtype = np.dtype(dtype)
 
-        return _DOFArray(actx, tuple(
-            creation_func(shape=(grp.nelements, grp.nunit_dofs), dtype=dtype)
-            for grp in self.groups))
+        result = _DOFArray(actx,
+                           tuple(creation_func(shape=(grp.nelements,
+                                                      grp.nunit_dofs),
+                                               dtype=dtype)
+                                 for grp in self.groups))
+        return tag_axes(result, actx, {0: DiscretizationElementAxisTag(),
+                                       1: DiscretizationDOFAxisTag()})
 
     def empty(self, actx: ArrayContext,
               dtype: Optional[np.dtype] = None) -> _DOFArray:
@@ -644,6 +651,8 @@ class Discretization:
         def resample_mesh_nodes(grp, iaxis):
             # TODO: would be nice to have the mesh use an array context already
             nodes = actx.from_numpy(grp.mesh_el_group.nodes[iaxis])
+            nodes = tag_axes(nodes, actx, {0: DiscretizationElementAxisTag(),
+                                           1: DiscretizationDOFAxisTag()})
 
             grp_unit_nodes = grp.unit_nodes.reshape(-1)
             meg_unit_nodes = grp.mesh_el_group.unit_nodes.reshape(-1)
@@ -654,7 +663,10 @@ class Discretization:
                 return nodes
 
             return actx.einsum("ij,ej->ei",
-                               actx.from_numpy(grp.from_mesh_interp_matrix()),
+                               actx.tag_axis(
+                                   0,
+                                   DiscretizationDOFAxisTag(),
+                                   actx.from_numpy(grp.from_mesh_interp_matrix())),
                                nodes,
                                tagged=(FirstAxisIsElementsTag(),))
 
@@ -714,7 +726,9 @@ def num_reference_derivative(
 
     return _DOFArray(actx, tuple(
             actx.einsum("ij,ej->ei",
-                        get_mat(grp, ref_axes),
+                        actx.tag_axis(0,
+                                      DiscretizationDOFAxisTag(),
+                                      get_mat(grp, ref_axes)),
                         vec[igrp],
                         tagged=(FirstAxisIsElementsTag(),))
             for igrp, grp in enumerate(discr.groups)))
