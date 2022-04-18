@@ -32,7 +32,7 @@ class EagerReduceComputingPytatoFakeNumpyNamespace(PytatoFakeNumpyNamespace):
     A Numpy-namespace that computes the reductions eagerly whenever possible.
     """
     def sum(self, a, axis=None, dtype=None):
-        if (rec_map_reduce_array_container(lambda x, y: x and y,
+        if (rec_map_reduce_array_container(all,
                                            _can_be_eagerly_computed, a)
                 and axis is None):
 
@@ -48,7 +48,7 @@ class EagerReduceComputingPytatoFakeNumpyNamespace(PytatoFakeNumpyNamespace):
             return super().sum(a, axis=axis, dtype=dtype)
 
     def min(self, a, axis=None):
-        if (rec_map_reduce_array_container(lambda x, y: x and y,
+        if (rec_map_reduce_array_container(all,
                                            _can_be_eagerly_computed, a)
                 and axis is None):
             queue = self._array_context.queue
@@ -62,7 +62,7 @@ class EagerReduceComputingPytatoFakeNumpyNamespace(PytatoFakeNumpyNamespace):
             return super().min(a, axis=axis)
 
     def max(self, a, axis=None):
-        if (rec_map_reduce_array_container(lambda x, y: x and y,
+        if (rec_map_reduce_array_container(all,
                                            _can_be_eagerly_computed, a)
                 and axis is None):
             queue = self._array_context.queue
