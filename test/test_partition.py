@@ -98,20 +98,22 @@ def test_partition_interpolation(actx_factory, dim, mesh_pars,
             part_per_element = get_partition_by_pymetis(mesh, num_parts,
                     connectivity=part_method)
 
+        from meshmode.distributed import membership_list_to_map
+        part_num_to_elements = membership_list_to_map(part_per_element)
+
         from meshmode.mesh.processing import partition_mesh
-        part_meshes = [
-            partition_mesh(mesh, part_per_element, i)[0] for i in range(num_parts)]
+        part_meshes = partition_mesh(mesh, part_num_to_elements)
 
         connected_parts = set()
-        for i_local_part, part_mesh in enumerate(part_meshes):
+        for i_local_part, part_mesh in part_meshes.items():
             from meshmode.distributed import get_connected_partitions
             neighbors = get_connected_partitions(part_mesh)
             for i_remote_part in neighbors:
                 connected_parts.add((i_local_part, i_remote_part))
 
         from meshmode.discretization import Discretization
-        vol_discrs = [Discretization(actx, part_meshes[i], group_factory)
-                        for i in range(num_parts)]
+        vol_discrs = [Discretization(actx, part_mesh, group_factory)
+                        for part_mesh in part_meshes.values()]
 
         from meshmode.mesh import BTAG_PARTITION
         from meshmode.discretization.connection import (make_face_restriction,
@@ -144,7 +146,6 @@ def test_partition_interpolation(actx_factory, dim, mesh_pars,
             remote_to_local_conn = make_partition_connection(
                     actx,
                     local_bdry_conn=local_bdry_conn,
-                    i_local_part=i_local_part,
                     remote_bdry_discr=remote_bdry,
                     remote_group_infos=make_remote_group_infos(
                         actx, i_local_part, remote_bdry_conn))
@@ -153,7 +154,6 @@ def test_partition_interpolation(actx_factory, dim, mesh_pars,
             local_to_remote_conn = make_partition_connection(
                     actx,
                     local_bdry_conn=remote_bdry_conn,
-                    i_local_part=i_remote_part,
                     remote_bdry_discr=local_bdry,
                     remote_group_infos=make_remote_group_infos(
                         actx, i_remote_part, local_bdry_conn))
@@ -229,24 +229,24 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
     # adjacency (e.g., when #groups == #parts)
     has_cross_rank_adj = _check_for_cross_rank_adj(mesh, part_per_element)
 
+    from meshmode.distributed import membership_list_to_map
+    part_num_to_elements = membership_list_to_map(part_per_element)
+
     from meshmode.mesh.processing import partition_mesh
-    # TODO: The same part_per_element array must be used to partition each mesh.
-    # Maybe the interface should be changed to guarantee this.
-    new_meshes = [
-        partition_mesh(mesh, part_per_element, i) for i in range(num_parts)]
+    part_meshes = partition_mesh(mesh, part_num_to_elements)
 
     assert mesh.nelements == np.sum(
-        [new_meshes[i][0].nelements for i in range(num_parts)]), \
+        [part_mesh.nelements for part_mesh in part_meshes.values()]), \
         "part_mesh has the wrong number of elements"
 
     assert count_tags(mesh, BTAG_ALL) == np.sum(
-        [count_tags(new_meshes[i][0], BTAG_ALL) for i in range(num_parts)]), \
+        [count_tags(part_mesh, BTAG_ALL) for part_mesh in part_meshes.values()]), \
         "part_mesh has the wrong number of BTAG_ALL boundaries"
 
     connected_parts = set()
-    for i_local_part, (part_mesh, _) in enumerate(new_meshes):
+    for i_local_part in range(num_parts):
         from meshmode.distributed import get_connected_partitions
-        neighbors = get_connected_partitions(part_mesh)
+        neighbors = get_connected_partitions(part_meshes[i_local_part])
         for i_remote_part in neighbors:
             connected_parts.add((i_local_part, i_remote_part))
 
@@ -255,10 +255,11 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
     num_tags = np.zeros((num_parts,))
 
     index_lookup_table = dict()
-    for ipart, (m, _) in enumerate(new_meshes):
-        for igrp in range(len(m.groups)):
+    for ipart in range(num_parts):
+        part_mesh = part_meshes[ipart]
+        for igrp in range(len(part_mesh.groups)):
             ipagrps = [
-                fagrp for fagrp in m.facial_adjacency_groups[igrp]
+                fagrp for fagrp in part_mesh.facial_adjacency_groups[igrp]
                 if isinstance(fagrp, InterPartitionAdjacencyGroup)]
             for ipagrp in ipagrps:
                 for i, (elem, face) in enumerate(
@@ -267,15 +268,19 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
 
     ipagrp_count = 0
 
+    part_elem_to_global_elem = {
+        part_num: np.sort(list(elements))
+        for part_num, elements in part_num_to_elements.items()}
+
     for part_num in range(num_parts):
-        part, part_to_global = new_meshes[part_num]
+        part = part_meshes[part_num]
         for grp_num in range(len(part.groups)):
             ipagrps = [
                 fagrp for fagrp in part.facial_adjacency_groups[grp_num]
                 if isinstance(fagrp, InterPartitionAdjacencyGroup)]
             ipagrp_count += len(ipagrps)
             for ipagrp in ipagrps:
-                n_part_num = ipagrp.ineighbor_partition
+                n_part_num = ipagrp.boundary_tag.part_id
                 num_tags[n_part_num] += len(ipagrp.elements)
                 elem_base = part.base_element_nrs[grp_num]
                 for idx in range(len(ipagrp.elements)):
@@ -284,7 +289,7 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
                     face = ipagrp.element_faces[idx]
                     n_meshwide_elem = ipagrp.neighbors[idx]
                     n_face = ipagrp.neighbor_faces[idx]
-                    n_part, n_part_to_global = new_meshes[n_part_num]
+                    n_part = part_meshes[n_part_num]
                     # Hack: find_igrps expects a numpy.ndarray and returns
                     #       a numpy.ndarray. But if a single integer is fed
                     #       into find_igrps, an integer is returned.
@@ -293,7 +298,7 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
                     n_ipagrps = [
                         fagrp for fagrp in n_part.facial_adjacency_groups[n_grp_num]
                         if isinstance(fagrp, InterPartitionAdjacencyGroup)
-                        and fagrp.ineighbor_partition == part_num]
+                        and fagrp.boundary_tag.part_id == part_num]
                     found_reverse_adj = False
                     for n_ipagrp in n_ipagrps:
                         n_elem_base = n_part.base_element_nrs[n_grp_num]
@@ -304,9 +309,11 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
                             meshwide_elem == n_ipagrp.neighbors[n_idx]
                             and face == n_ipagrp.neighbor_faces[n_idx])
                         if found_reverse_adj:
-                            _, n_part_to_global = new_meshes[n_part_num]
-                            p_meshwide_elem = part_to_global[elem + elem_base]
-                            p_meshwide_n_elem = n_part_to_global[n_meshwide_elem]
+                            p_meshwide_elem = (
+                                part_elem_to_global_elem[part_num][elem + elem_base])
+                            p_meshwide_n_elem = (
+                                part_elem_to_global_elem[n_part_num][
+                                    n_meshwide_elem])
                     assert found_reverse_adj, ("InterPartitionAdjacencyGroup is not "
                         "consistent")
 
@@ -336,9 +343,10 @@ def test_partition_mesh(mesh_size, num_parts, num_groups, dim, scramble_partitio
 
     for i_remote_part in range(num_parts):
         tag_sum = 0
-        for i_local_part, (mesh, _) in enumerate(new_meshes):
+        for i_local_part in range(num_parts):
             if (i_local_part, i_remote_part) in connected_parts:
-                tag_sum += count_tags(mesh, BTAG_PARTITION(i_remote_part))
+                tag_sum += count_tags(
+                    part_meshes[i_local_part], BTAG_PARTITION(i_remote_part))
         assert num_tags[i_remote_part] == tag_sum,\
                 "part_mesh has the wrong number of BTAG_PARTITION boundaries"
 

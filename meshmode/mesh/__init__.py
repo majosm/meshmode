@@ -22,7 +22,7 @@ THE SOFTWARE.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace, field
-from typing import Any, ClassVar, Hashable, Optional, Tuple, Type
+from typing import Any, ClassVar, Hashable, Optional, Tuple, Type, Sequence
 
 import numpy as np
 import numpy.linalg as la
@@ -66,6 +66,10 @@ Predefined Boundary tags
 
 # {{{ element tags
 
+BoundaryTag = Hashable
+PartitionID = Hashable
+
+
 class BTAG_NONE:  # noqa: N801
     """A boundary tag representing an empty boundary or volume."""
 
@@ -106,22 +110,37 @@ class BTAG_NO_BOUNDARY:  # noqa: N801
 class BTAG_PARTITION(BTAG_NO_BOUNDARY):  # noqa: N801
     """
     A boundary tag indicating that this edge is adjacent to an element of
-    another :class:`Mesh`. The partition number of the adjacent mesh
-    is given by ``part_nr``.
+    another :class:`Mesh`. The partition identifier of the adjacent mesh is given
+    by ``part_id``.
 
-    .. attribute:: part_nr
+    .. attribute:: part_id
 
     .. versionadded:: 2017.1
     """
-    def __init__(self, part_nr):
-        self.part_nr = int(part_nr)
+    def __init__(self, part_id: PartitionID, part_nr=None):
+        if part_nr is not None:
+            from warnings import warn
+            warn("part_nr is deprecated and will stop working in March 2023. "
+                 "Use part_id instead.",
+                 DeprecationWarning, stacklevel=2)
+            self.part_id = int(part_nr)
+        else:
+            self.part_id = part_id
+
+    @property
+    def part_nr(self):
+        from warnings import warn
+        warn("part_nr is deprecated and will stop working in March 2023. "
+             "Use part_id instead.",
+             DeprecationWarning, stacklevel=2)
+        return self.part_id
 
     def __hash__(self):
-        return hash((type(self), self.part_nr))
+        return hash((type(self), self.part_id))
 
     def __eq__(self, other):
         if isinstance(other, BTAG_PARTITION):
-            return self.part_nr == other.part_nr
+            return self.part_id == other.part_id
         else:
             return False
 
@@ -129,10 +148,10 @@ class BTAG_PARTITION(BTAG_NO_BOUNDARY):  # noqa: N801
         return not self.__eq__(other)
 
     def __repr__(self):
-        return "<{}({})>".format(type(self).__name__, repr(self.part_nr))
+        return "<{}({})>".format(type(self).__name__, repr(self.part_id))
 
     def as_python(self):
-        return f"{self.__class__.__name__}({self.part_nr})"
+        return f"{self.__class__.__name__}({self.part_id})"
 
 
 class BTAG_INDUCED_BOUNDARY(BTAG_NO_BOUNDARY):  # noqa: N801
@@ -754,10 +773,6 @@ class InterPartitionAdjacencyGroup(BoundaryAdjacencyGroup):
         The boundary tag identifier of this group. Will be an instance of
         :class:`~meshmode.mesh.BTAG_PARTITION`.
 
-    .. attribute:: ineighbor_partition
-
-        The partition number to which the neighboring faces belong.
-
     .. attribute:: elements
 
         Group-local element numbers.
@@ -794,7 +809,6 @@ class InterPartitionAdjacencyGroup(BoundaryAdjacencyGroup):
     .. versionadded:: 2017.1
     """
 
-    ineighbor_partition: BTAG_PARTITION
     neighbors: np.ndarray
     neighbor_faces: np.ndarray
     aff_map: AffineMap
@@ -802,7 +816,6 @@ class InterPartitionAdjacencyGroup(BoundaryAdjacencyGroup):
     def __eq__(self, other):
         return (
             super().__eq__(other)
-            and self.ineighbor_partition == other.ineighbor_partition
             and np.array_equal(self.neighbors, other.neighbors)
             and np.array_equal(self.neighbor_faces, other.neighbor_faces)
             and self.aff_map == other.aff_map)
@@ -816,7 +829,6 @@ class InterPartitionAdjacencyGroup(BoundaryAdjacencyGroup):
             boundary_tag=_boundary_tag_as_python(self.boundary_tag),
             elements=_numpy_array_as_python(self.elements),
             element_faces=_numpy_array_as_python(self.element_faces),
-            ineighbor_partition=self.ineighbor_partition,
             neighbors=_numpy_array_as_python(self.neighbors),
             neighbor_faces=_numpy_array_as_python(self.neighbor_faces),
             aff_map=_affine_map_as_python(self.aff_map))
@@ -912,6 +924,8 @@ class Mesh(Record):
     .. automethod:: __eq__
     .. automethod:: __ne__
     """
+
+    groups: Sequence[MeshElementGroup]
 
     face_id_dtype = np.int8
 
@@ -1058,11 +1072,15 @@ class Mesh(Record):
 
     @property
     def ambient_dim(self):
+        if not self.groups:
+            return None
         from pytools import single_valued
         return single_valued(grp.nodes.shape[0] for grp in self.groups)
 
     @property
     def dim(self):
+        if not self.groups:
+            return None
         from pytools import single_valued
         return single_valued(grp.dim for grp in self.groups)
 
@@ -1113,7 +1131,7 @@ class Mesh(Record):
         return self._nodal_adjacency
 
     @property
-    def facial_adjacency_groups(self):
+    def facial_adjacency_groups(self) -> Sequence[Sequence[FacialAdjacencyGroup]]:
         from meshmode import DataUnavailable
 
         # pylint: disable=access-member-before-definition
@@ -1344,9 +1362,10 @@ def _match_faces_by_vertices(groups, face_ids, vertex_index_map_func=None):
 
 
 def _compute_facial_adjacency_from_vertices(
-        groups, element_id_dtype, face_id_dtype, face_vertex_indices_to_tags=None):
+        groups, element_id_dtype, face_id_dtype, face_vertex_indices_to_tags=None
+        ) -> Sequence[Sequence[FacialAdjacencyGroup]]:
     if not groups:
-        return None
+        return []
 
     if face_vertex_indices_to_tags is not None:
         boundary_tags = {
