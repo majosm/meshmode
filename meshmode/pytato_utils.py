@@ -392,7 +392,8 @@ class DiscretizationEntityConstraintCollector(pt.transform.Mapper):
         # trivial reshapes:
         # (x1, x2, ... xn) -> ((1,)*, x1, (1,)*, x2, (1,)*, x3, (1,)*, ..., xn, 1*)
         # given all(x1!=1, x2!=1, x3!=1, .. xn!= 1)
-        if ((1 not in (expr.array.shape))  # leads to ambiguous newaxis
+        if (expr.size > 0
+                and (1 not in (expr.array.shape))  # leads to ambiguous newaxis
                 and (set(expr.shape) <= (set(expr.array.shape) | {1}))):
             i_in_axis = 0
             for i_out_axis, dim in enumerate(expr.shape):
