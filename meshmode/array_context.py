@@ -541,7 +541,10 @@ def _alias_global_temporaries(t_unit):
         if tv.address_space != AddressSpace.GLOBAL:
             new_tvs[name] = tv
         else:
-            assert name in new_tvs
+            # FIXME: Need tighter assertion condition (this doesn't work when
+            # zero-size arrays are present)
+            # assert name in new_tvs
+            pass
 
     kernel = kernel.copy(temporary_variables=new_tvs)
 
