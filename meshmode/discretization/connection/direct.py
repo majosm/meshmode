@@ -705,13 +705,6 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                                     grp_ary_contrib,
                                     0)
 
-                            # attach metadata
-                            grp_ary_contrib = tag_axes(
-                                grp_ary_contrib,
-                                actx,
-                                {0: DiscretizationElementAxisTag(),
-                                 1: DiscretizationDOFAxisTag()})
-
                             group_array_contributions.append(grp_ary_contrib)
                 else:
                     for fgpd in group_pick_info:
@@ -787,12 +780,6 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                                     self.to_discr.groups[i_tgrp].nunit_dofs)
                             )["result"]
 
-                    # attach metadata
-                    batch_result = tag_axes(batch_result,
-                                            actx,
-                                            {0: DiscretizationElementAxisTag(),
-                                             1: DiscretizationDOFAxisTag()})
-
                     group_array_contributions.append(batch_result)
 
             if group_array_contributions:
@@ -804,6 +791,12 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                         shape=(self.to_discr.groups[i_tgrp].nelements,
                                self.to_discr.groups[i_tgrp].nunit_dofs),
                         dtype=ary.entry_dtype)
+
+            # attach metadata
+            group_array = tag_axes(group_array,
+                                   actx,
+                                   {0: DiscretizationElementAxisTag(),
+                                    1: DiscretizationDOFAxisTag()})
 
             group_arrays.append(group_array)
 
