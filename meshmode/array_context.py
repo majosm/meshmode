@@ -490,6 +490,8 @@ def _alias_global_temporaries(t_unit):
     iel_to_temps_to_free = {iel: set() for iel in all_iels}
     for tv in temp_vars:
         allocate_iel, free_iel = temp_to_iel_start[tv], temp_to_iel_end[tv]
+        if iel_order[allocate_iel] >= iel_order[free_iel]:
+            continue
         iel_to_temps_to_allocate[allocate_iel].add(tv)
         iel_to_temps_to_free[free_iel].add(tv)
 
