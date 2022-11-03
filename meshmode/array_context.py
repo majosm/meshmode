@@ -1358,10 +1358,10 @@ class FusionContractorArrayContext(
 
                 return pt.Einsum(expr.access_descriptors,
                                  (arg1, arg2, arg3),
-                                 expr.axes,
                                  expr.redn_axis_to_redn_descr,
                                  expr.index_to_access_descr,
-                                 expr.tags)
+                                 axes=expr.axes,
+                                 tags=expr.tags)
             else:
                 return expr
 
