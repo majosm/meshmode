@@ -1279,6 +1279,10 @@ class FusionContractorArrayContext(
         indirection_maps = set()
 
         class _IndirectionMapRecorder(pt.transform.CachedWalkMapper):
+            # type-ignore-reason: dropped the extra `*args, **kwargs`.
+            def get_cache_key(self, expr) -> int:  # type: ignore[override]
+                return id(expr)
+
             def post_visit(self, expr):
                 if isinstance(expr, pt.IndexBase):
                     for idx in expr.indices:
