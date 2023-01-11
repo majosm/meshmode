@@ -1,3 +1,5 @@
+# mypy: disallow-untyped-defs
+
 __copyright__ = "Copyright (C) 2013 Andreas Kloeckner"
 
 __license__ = """
@@ -20,13 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Type, Union, Sequence
 
 import numpy as np
 import numpy.linalg as la
 import modepy as mp
 
 from meshmode.mesh import Mesh, MeshElementGroup
+from meshmode.mesh.refinement import Refiner
 
 from pytools import log_process, deprecate_keyword
 
@@ -47,13 +50,17 @@ Curve parametrizations
 .. autofunction:: circle
 .. autofunction:: ellipse
 .. autofunction:: cloverleaf
-.. data :: starfish
 .. autofunction:: drop
 .. autofunction:: n_gon
 .. autofunction:: qbx_peanut
+.. autofunction:: dumbbell
+.. autofunction:: wobbly_dumbbell
 .. autofunction:: apple
+.. autofunction:: clamp_piecewise
 .. autoclass:: WobblyCircle
 .. autoclass:: NArmedStarfish
+.. data:: starfish3
+.. data:: starfish5
 
 Surfaces
 --------
@@ -83,7 +90,7 @@ Tools for Iterative Refinement
 
 # {{{ test curve parametrizations
 
-def circle(t: np.ndarray):
+def circle(t: np.ndarray) -> np.ndarray:
     """
     :arg t: the parametrization, runs from :math:`[0, 1]`.
     :return: an array of shape ``(2, t.size)``.
@@ -91,7 +98,7 @@ def circle(t: np.ndarray):
     return ellipse(1.0, t)
 
 
-def ellipse(aspect_ratio: float, t: np.ndarray):
+def ellipse(aspect_ratio: float, t: np.ndarray) -> np.ndarray:
     """
     :arg t: the parametrization, runs from :math:`[0, 1]`.
     :return: an array of shape ``(2, t.size)``.
@@ -105,7 +112,7 @@ def ellipse(aspect_ratio: float, t: np.ndarray):
         ])
 
 
-def cloverleaf(t: np.ndarray):
+def cloverleaf(t: np.ndarray) -> np.ndarray:
     """
     :arg t: the parametrization, runs from :math:`[0, 1]`.
     :return: an array of shape ``(2, t.size)``.
@@ -123,7 +130,7 @@ def cloverleaf(t: np.ndarray):
         ])
 
 
-def drop(t: np.ndarray):
+def drop(t: np.ndarray) -> np.ndarray:
     """
     :arg t: the parametrization, runs from :math:`[0, 1]`.
     :return: an array of shape ``(2, t.size)``.
@@ -138,7 +145,7 @@ def drop(t: np.ndarray):
         ])
 
 
-def n_gon(n_corners, t):
+def n_gon(n_corners: int, t: np.ndarray) -> np.ndarray:
     """
     :arg t: the parametrization, runs from :math:`[0, 1]`.
     :return: an array of shape ``(2, t.size)``.
@@ -166,21 +173,47 @@ def n_gon(n_corners, t):
     return result
 
 
-def qbx_peanut(t: np.ndarray):
+def qbx_peanut(t: np.ndarray) -> np.ndarray:
     """
     :arg t: the parametrization, runs from :math:`[0, 1]`.
     :return: an array of shape ``(2, t.size)``.
     """
-    ilength = 2*np.pi
-    t = t*ilength
+    t = 2.0 * np.pi * t
 
+    r = (1.0 + 0.3 * np.sin(2 * t))
     return np.vstack([
-        0.75 * np.cos(t-0.25*np.pi) * (1+0.3*np.sin(2*t)),
-        np.sin(t-0.25*np.pi) * (1+0.3*np.sin(2*t))
+        3 / 4 * r * np.cos(t - np.pi / 4),
+        r * np.sin(t - np.pi / 4),
         ])
 
 
-def apple(a: float, t: np.ndarray):
+def dumbbell(gamma: float, beta: float, t: np.ndarray):
+    """
+    :arg t: the parametrization, runs from :math:`[0, 1]`.
+    :return: an array of shape ``(2, t.size)``.
+    """
+    return wobbly_dumbbell(gamma, beta, 1, 0, t)
+
+
+def wobbly_dumbbell(
+        gamma: float, beta: float, p: int, wavenumber: int,
+        t: np.ndarray):
+    """
+    :arg t: the parametrization, runs from :math:`[0, 1]`.
+    :return: an array of shape ``(2, t.size)``.
+    """
+    t = 2.0 * np.pi * t
+    r = (
+        gamma * (1 + beta / (1 - beta) * np.cos(t) ** 2) ** (1 / p)
+        + 0.02 * np.sin(wavenumber * t) ** 2)
+
+    return np.stack([
+        np.cos(t),
+        r * np.sin(t),
+        ])
+
+
+def apple(a: float, t: np.ndarray) -> np.ndarray:
     """
     :arg a: roundness parameter in :math:`[0, 1/2]`, where :math:`0` gives
         a circle and :math:`1/2` gives a cardioid.
@@ -199,16 +232,83 @@ def apple(a: float, t: np.ndarray):
         ])
 
 
+def clamp_piecewise(
+        r_major: float, r_minor: float, gap: float,
+        t: np.ndarray) -> np.ndarray:
+    """
+    :arg r_major: radius of the outer shell.
+    :arg r_minor: radius of the inner shell.
+    :arg gap: half-angle (in radians) of the right-hand side gap.
+    :return: an array of shape ``(2, t.size)``.
+    """
+
+    def rotation_matrix(angle: float) -> np.ndarray:
+        return np.array([
+            [np.cos(angle), -np.sin(angle)],
+            [np.sin(angle), np.cos(angle)]])
+
+    assert r_major > 0 and r_minor > 0 and r_major > r_minor
+    assert gap > 0 and gap < 2 * np.pi
+    r_cap = (r_major - r_minor) / 2
+    inv_gap = 2 * np.pi - 2 * gap
+
+    # NOTE: Split [0, 1] interval into 5 chunks that have about equal arclength.
+    # This is possible because each chunk is a circle arc, so we know its length.
+
+    L = (       # noqa: N806
+        inv_gap * r_major
+        + inv_gap * r_minor
+        + 2 * np.pi * r_cap)
+    t0 = 0.0
+    t1 = inv_gap * r_major / L
+    t2 = t1 + np.pi * r_cap / L
+    t3 = t2 + inv_gap * r_minor / L
+    t4 = t3 + np.pi * r_cap / L
+
+    # outer shell
+    m_outer = (t < t1).astype(t.dtype)
+    theta = m_outer * (np.pi + inv_gap * (t - (t1 + t0) / 2) / (t1 - t0))
+    f_outer = np.stack([r_major * np.cos(theta), r_major * np.sin(theta)])
+
+    # first cap
+    m_caps0 = np.logical_and(t >= t1, t < t2).astype(t.dtype)
+    theta = m_caps0 * (np.pi / 2 + np.pi * (t - (t2 + t1) / 2) / (t2 - t1))
+    R = r_cap * rotation_matrix(-gap)       # noqa: N806
+    f_caps0 = R @ np.stack([
+        np.cos(theta) - 1, np.sin(theta)
+        ]) + r_major * np.stack([[np.cos(-gap), np.sin(-gap)]]).T
+
+    # inner shell
+    m_inner = np.logical_and(t >= t2, t < t3).astype(t.dtype)
+    theta = -m_inner * (np.pi + inv_gap * (t - (t2 + t3) / 2) / (t3 - t2))
+    f_inner = np.stack([r_minor * np.cos(theta), r_minor * np.sin(theta)])
+
+    # second cap
+    m_caps1 = (t >= t3).astype(t.dtype)
+    theta = m_caps1 * (np.pi / 2 + np.pi * (t - (t3 + t4) / 2) / (t4 - t3))
+    R = r_cap * rotation_matrix(np.pi + gap)        # noqa: N806
+    f_caps1 = R @ np.stack([
+        np.cos(theta) + 1, np.sin(theta)
+        ]) + r_major * np.stack([[np.cos(gap), np.sin(gap)]]).T
+
+    return (
+        m_outer * f_outer
+        + m_caps0 * f_caps0
+        + m_inner * f_inner
+        + m_caps1 * f_caps1)
+
+
 class WobblyCircle:
     """
     .. automethod:: random
     .. automethod:: __call__
     """
-    def __init__(self, coeffs: np.ndarray):
+    def __init__(self, coeffs: np.ndarray, phase: float = 0.0) -> None:
         self.coeffs = coeffs
+        self.phase = phase
 
     @staticmethod
-    def random(ncoeffs: int, seed: int):
+    def random(ncoeffs: int, seed: int) -> "WobblyCircle":
         rng = np.random.default_rng(seed)
         coeffs = rng.random(ncoeffs)
 
@@ -216,7 +316,7 @@ class WobblyCircle:
 
         return WobblyCircle(coeffs)
 
-    def __call__(self, t: np.ndarray):
+    def __call__(self, t: np.ndarray) -> np.ndarray:
         """
         :arg t: the parametrization, runs from :math:`[0, 1]`.
         :return: an array of shape ``(2, t.size)``.
@@ -227,7 +327,7 @@ class WobblyCircle:
 
         wave = 1
         for i, coeff in enumerate(self.coeffs):
-            wave = wave + coeff*np.sin((i+1)*t)
+            wave = wave + coeff*np.sin((i+1)*t + self.phase)
 
         return np.vstack([
             np.cos(t)*wave,
@@ -240,13 +340,26 @@ class NArmedStarfish(WobblyCircle):
 
     .. automethod:: __call__
     """
-    def __init__(self, n_arms: int, amplitude: float):
+    def __init__(self, n_arms: int, amplitude: float, phase: float = 0.0) -> None:
         coeffs = np.zeros(n_arms)
         coeffs[-1] = amplitude
-        super().__init__(coeffs)
+        super().__init__(coeffs, phase=phase)
+
+    @staticmethod
+    def random(seed: int) -> "NArmedStarfish":
+        rng = np.random.default_rng(seed)
+
+        # NOTE: 32 arms should be enough for everybody!
+        n_arms = rng.integers(3, 33)
+        amplitude = 0.25 + 0.75 * rng.random()
+
+        return NArmedStarfish(n_arms, amplitude)
 
 
-starfish = NArmedStarfish(5, 0.25)
+starfish3 = NArmedStarfish(3, 1 / 2, phase=np.pi / 2)
+starfish5 = NArmedStarfish(5, 0.25)
+
+starfish = starfish5
 
 # }}}
 
@@ -519,7 +632,7 @@ def generate_sphere(r: float, order: int, *,
         uniform_refinement_rounds: int = 0,
         node_vertex_consistency_tolerance: Optional[Union[float, bool]] = None,
         unit_nodes: Optional[np.ndarray] = None,
-        group_cls: Optional[type] = None):
+        group_cls: Optional[type] = None) -> Mesh:
     """
     :arg r: radius of the sphere.
     :arg order: order of the group elements. If *unit_nodes* is also
@@ -624,7 +737,7 @@ def generate_surface_of_revolution(
             is_conforming=True)
 
     # ensure vertices and nodes are still on the surface with radius r
-    def ensure_radius(arr):
+    def ensure_radius(arr: np.ndarray) -> np.ndarray:
         res = arr.copy()
         h = res[2, :].flatten()
         theta = np.arctan2(res[1, :].flatten(), res[0, :].flatten())
@@ -665,7 +778,7 @@ def generate_torus_and_cycle_vertices(
     if group_cls is None:
         group_cls = SimplexElementGroup
 
-    def idx(i, j):
+    def idx(i: int, j: int) -> int:
         return i + j * (n_major + 1)
 
     if issubclass(group_cls, SimplexElementGroup):
@@ -860,7 +973,7 @@ def refine_mesh_and_get_urchin_warper(
     .. versionadded: 2018.1
     """
 
-    def sph_harm(m, n, pts):
+    def sph_harm(m: int, n: int, pts: np.ndarray) -> np.ndarray:
         assert abs(m) <= n
         x, y, z = pts
         r = np.sqrt(np.sum(pts**2, axis=0))
@@ -877,7 +990,7 @@ def refine_mesh_and_get_urchin_warper(
         # arguments swapped maintains the intended meaning.
         return sps.sph_harm(m, n, phi, theta)       # pylint: disable=no-member
 
-    def map_coords(pts):
+    def map_coords(pts: np.ndarray) -> np.ndarray:
         r = np.sqrt(np.sum(pts**2, axis=0))
 
         sph = sph_harm(m, n, pts).real
@@ -886,7 +999,7 @@ def refine_mesh_and_get_urchin_warper(
 
         return pts * new_rad / r
 
-    def warp_mesh(mesh, node_vertex_consistency_tolerance):
+    def warp_mesh(mesh: Mesh) -> Mesh:
         from dataclasses import replace
         groups = [
             replace(grp, nodes=map_coords(grp.nodes),
@@ -918,7 +1031,7 @@ def refine_mesh_and_get_urchin_warper(
     from functools import partial
     unwarped_mesh = warp_and_refine_until_resolved(
                 refiner,
-                partial(warp_mesh, node_vertex_consistency_tolerance=False),
+                warp_mesh,
                 est_rel_interp_tolerance)
 
     return refiner, partial(
@@ -957,9 +1070,15 @@ def generate_urchin(
 # {{{ generate_box_mesh
 
 @deprecate_keyword("group_factory", "group_cls")
-def generate_box_mesh(axis_coords, order=1, *, coord_dtype=np.float64,
-        periodic=None, group_cls=None, boundary_tag_to_face=None,
-        mesh_type=None, unit_nodes=None) -> Mesh:
+def generate_box_mesh(
+        axis_coords: Tuple[np.ndarray, ...],
+        order: int = 1, *,
+        coord_dtype: Any = np.float64,
+        periodic: Optional[bool] = None,
+        group_cls: Optional[Type[MeshElementGroup]] = None,
+        boundary_tag_to_face: Optional[Dict[Any, str]] = None,
+        mesh_type: Optional[str] = None,
+        unit_nodes: Optional[np.ndarray] = None) -> Mesh:
     r"""Create a semi-structured mesh.
 
     :arg axis_coords: a tuple with a number of entries corresponding
@@ -979,7 +1098,8 @@ def generate_box_mesh(axis_coords, order=1, *, coord_dtype=np.float64,
 
         For example::
 
-            boundary_tag_to_face={"bdry_1": ["+x", "+y"], "bdry_2": ["-x"]}
+            boundary_tag_to_face = {"bdry_1": ["+x", "+y"], "bdry_2": ["-x"]}
+
     :arg mesh_type: In two dimensions with non-tensor-product elements,
         *mesh_type* may be set to ``"X"`` to generate this type
         of mesh::
@@ -1214,53 +1334,57 @@ def generate_box_mesh(axis_coords, order=1, *, coord_dtype=np.float64,
     facial_adjacency_groups = None
     face_vertex_indices_to_tags = {}
     boundary_tags = list(boundary_tag_to_face.keys())
+    nbnd_tags = len(boundary_tags)
 
-    if boundary_tags:
+    if nbnd_tags > 0:
         vert_index_to_tuple = {
                 vertex_indices[itup]: itup
                 for itup in np.ndindex(shape)}
 
-    for tag in boundary_tags:
-        # Need to map the correct face vertices to the boundary tags
-        for face in boundary_tag_to_face[tag]:
-            if len(face) != 2:
-                raise ValueError("face identifier '%s' does not "
-                        "consist of exactly two characters" % face)
+        for ielem in range(0, grp.nelements):
+            for ref_fvi in grp.face_vertex_indices():
+                fvi = grp.vertex_indices[ielem, ref_fvi]
+                try:
+                    fvi_tuples = [vert_index_to_tuple[i] for i in fvi]
+                except KeyError:
+                    # Happens for interior faces of "X" meshes because
+                    # midpoints aren't in vert_index_to_tuple. We don't
+                    # care about them.
+                    continue
 
-            side, axis = face
-            try:
-                axis = axes.index(axis)
-            except ValueError as exc:
-                raise ValueError(
-                        f"unrecognized axis in face identifier '{face}'") from exc
-            if axis >= dim:
-                raise ValueError("axis in face identifier '%s' does not exist in %dD"
-                        % (face, dim))
+                for tag in boundary_tags:
+                    # Need to map the correct face vertices to the boundary tags
+                    for face in boundary_tag_to_face[tag]:
+                        if len(face) != 2:
+                            raise ValueError(
+                                "face identifier '%s' does not "
+                                "consist of exactly two characters" % face)
 
-            if side == "-":
-                vert_crit = 0
-            elif side == "+":
-                vert_crit = shape[axis] - 1
-            else:
-                raise ValueError("first character of face identifier '%s' is not"
-                        "'+' or '-'" % face)
+                        side, axis = face
+                        try:
+                            axis = axes.index(axis)
+                        except ValueError as exc:
+                            raise ValueError(
+                                "unrecognized axis in face identifier "
+                                f"'{face}'") from exc
+                        if axis >= dim:
+                            raise ValueError("axis in face identifier '%s' "
+                                             "does not exist in %dD" % (face, dim))
 
-            for ielem in range(0, grp.nelements):
-                for ref_fvi in grp.face_vertex_indices():
-                    fvi = grp.vertex_indices[ielem, ref_fvi]
-                    try:
-                        fvi_tuples = [vert_index_to_tuple[i] for i in fvi]
-                    except KeyError:
-                        # Happens for interior faces of "X" meshes because
-                        # midpoints aren't in vert_index_to_tuple. We don't
-                        # care about them.
-                        continue
+                        if side == "-":
+                            vert_crit = 0
+                        elif side == "+":
+                            vert_crit = shape[axis] - 1
+                        else:
+                            raise ValueError("first character of face identifier"
+                                             " '%s' is not '+' or '-'" % face)
 
-                    if all(fvi_tuple[axis] == vert_crit for fvi_tuple in fvi_tuples):
-                        key = frozenset(fvi)
-                        face_vertex_indices_to_tags.setdefault(key, []).append(tag)
+                        if all(fvi_tuple[axis] == vert_crit
+                               for fvi_tuple in fvi_tuples):
+                            key = frozenset(fvi)
+                            face_vertex_indices_to_tags.setdefault(key,
+                                                                   []).append(tag)
 
-    if boundary_tags:
         from meshmode.mesh import _compute_facial_adjacency_from_vertices
         facial_adjacency_groups = _compute_facial_adjacency_from_vertices(
                 [grp], np.int32, np.int8, face_vertex_indices_to_tags)
@@ -1303,15 +1427,18 @@ def generate_box_mesh(axis_coords, order=1, *, coord_dtype=np.float64,
 # {{{ generate_regular_rect_mesh
 
 @deprecate_keyword("group_factory", "group_cls")
-def generate_regular_rect_mesh(a=(0, 0), b=(1, 1), *, nelements_per_axis=None,
-                               npoints_per_axis=None,
-                               periodic=None,
-                               order=1,
-                               boundary_tag_to_face=None,
-                               group_cls=None,
-                               mesh_type=None,
-                               n=None,
-                               ) -> Mesh:
+def generate_regular_rect_mesh(
+        a: Sequence[float] = (0, 0),
+        b: Sequence[float] = (1, 1), *,
+        nelements_per_axis: Optional[int] = None,
+        npoints_per_axis: Optional[int] = None,
+        periodic: Optional[bool] = None,
+        order: int = 1,
+        boundary_tag_to_face: Optional[Dict[Any, str]] = None,
+        group_cls: Optional[Type[MeshElementGroup]] = None,
+        mesh_type: Optional[str] = None,
+        n: Optional[int] = None,
+        ) -> Mesh:
     """Create a semi-structured rectangular mesh with equispaced elements.
 
     :arg a: the lower left hand point of the rectangle.
@@ -1376,8 +1503,12 @@ def generate_regular_rect_mesh(a=(0, 0), b=(1, 1), *, nelements_per_axis=None,
 
 # {{{ generate_warped_rect_mesh
 
-def generate_warped_rect_mesh(dim, order, *, nelements_side=None,
-        npoints_side=None, group_cls=None, n=None) -> Mesh:
+def generate_warped_rect_mesh(
+        dim: int, order: int, *,
+        nelements_side: Optional[int] = None,
+        npoints_side: Optional[int] = None,
+        group_cls: Optional[Type[MeshElementGroup]] = None,
+        n: Optional[int] = None) -> Mesh:
     """Generate a mesh of a warped square/cube. Mainly useful for testing
     functionality with curvilinear meshes.
     """
@@ -1407,7 +1538,7 @@ def generate_warped_rect_mesh(dim, order, *, nelements_side=None,
             a=(-0.5,)*dim, b=(0.5,)*dim,
             npoints_per_axis=npoints_per_axis, order=order, group_cls=group_cls)
 
-    def m(x):
+    def m(x: np.ndarray) -> np.ndarray:
         result = np.empty_like(x)
         if len(x) >= 2:
             result[0] = (
@@ -1432,7 +1563,8 @@ def generate_warped_rect_mesh(dim, order, *, nelements_side=None,
 # {{{ generate_annular_cylinder_slice_mesh
 
 def generate_annular_cylinder_slice_mesh(
-        n, center, inner_radius, outer_radius, periodic=False) -> Mesh:
+        n: int, center: np.ndarray, inner_radius: float, outer_radius: float,
+        periodic: bool = False) -> Mesh:
     r"""
     Generate a slice of a 3D annular cylinder for
     :math:`\theta \in [-\frac{\pi}{4}, \frac{\pi}{4}]`. Optionally periodic in
@@ -1451,7 +1583,7 @@ def generate_annular_cylinder_slice_mesh(
             "+z": ["+z"],
             })
 
-    def transform(x):
+    def transform(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         r = inner_radius*(1 - x[0]) + outer_radius*x[0]
         theta = -np.pi/4*(1 - x[1]) + np.pi/4*x[1]
         z = -0.5*(1 - x[2]) + 0.5*x[2]
@@ -1487,7 +1619,9 @@ def generate_annular_cylinder_slice_mesh(
 
 @log_process(logger)
 def warp_and_refine_until_resolved(
-        unwarped_mesh_or_refiner, warp_callable, est_rel_interp_tolerance) -> Mesh:
+        unwarped_mesh_or_refiner: Union[Mesh, Refiner],
+        warp_callable: Callable[[Mesh], Mesh],
+        est_rel_interp_tolerance: float) -> Mesh:
     """Given an original ("unwarped") :class:`meshmode.mesh.Mesh` and a
     warping function *warp_callable* that takes and returns a mesh and a
     tolerance to which the mesh should be resolved by the mapping polynomials,
@@ -1507,9 +1641,12 @@ def warp_and_refine_until_resolved(
     if isinstance(unwarped_mesh_or_refiner, RefinerWithoutAdjacency):
         refiner = unwarped_mesh_or_refiner
         unwarped_mesh = refiner.get_current_mesh()
-    else:
+    elif isinstance(unwarped_mesh_or_refiner, Mesh):
         unwarped_mesh = unwarped_mesh_or_refiner
         refiner = RefinerWithoutAdjacency(unwarped_mesh)
+    else:
+        raise TypeError(
+            f"unsupported type: '{type(unwarped_mesh_or_refiner).__name__}'")
 
     iteration = 0
 

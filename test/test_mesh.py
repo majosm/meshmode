@@ -24,6 +24,7 @@ THE SOFTWARE.
 """
 
 from functools import partial
+from dataclasses import replace
 import numpy as np
 import numpy.linalg as la
 import pytest
@@ -418,11 +419,13 @@ def test_mesh_rotation(ambient_dim, visualize=False):
     order = 3
 
     if ambient_dim == 2:
-        nelements = 32
+        nelements = 256
         mesh = mgen.make_curve_mesh(
-                partial(mgen.ellipse, 2.0),
+                # partial(mgen.ellipse, 2.0),
+                partial(mgen.clamp_piecewise, 1.0, 2 / 3, np.pi / 6),
                 np.linspace(0.0, 1.0, nelements + 1),
                 order=order)
+
     elif ambient_dim == 3:
         mesh = mgen.generate_torus(4.0, 2.0, order=order)
     else:
@@ -634,7 +637,7 @@ def test_element_orientation_via_single_elements(order):
     assert len(el_ind_zero) == 0
 
     mesh = mio.read_gmsh("testmesh.msh", force_ambient_dim=2,
-            mesh_construction_kwargs=dict(skip_tests=True))
+                         mesh_construction_kwargs={"skip_tests": True})
     mgrp, = mesh.groups
     el_ind_pos, el_ind_neg, el_ind_zero = check(mesh.vertices, mgrp.vertex_indices)
     assert len(el_ind_pos) == 1
@@ -1130,6 +1133,156 @@ def test_mesh_element_group_constructor(shape_cls, group_cls):
 # }}}
 
 
+# {{{ test_node_vertex_consistency_check
+
+def test_node_vertex_consistency_check(actx_factory):
+    actx = actx_factory()
+
+    from meshmode import InconsistentVerticesError
+
+    dtype = np.float64
+    tol = 1e3 * np.finfo(dtype).eps
+
+    # Mesh bounds invariance
+
+    def gen_rect_mesh_with_perturbed_vertices(
+            a, b, nelements_per_axis, perturb_amount):
+        mesh_unperturbed = mgen.generate_regular_rect_mesh(
+            a=a, b=b, nelements_per_axis=nelements_per_axis)
+        return mesh_unperturbed.copy(  # noqa: F841
+            vertices=(
+                mesh_unperturbed.vertices
+                + perturb_amount*np.ones(mesh_unperturbed.vertices.shape)),
+            node_vertex_consistency_tolerance=tol)
+
+    # Find critical perturbation amount "w" such that vertices shifted by w works
+    # but 10*w doesn't
+    h = 1
+    nelems = 8
+    size = h*nelems
+    crit_perturb = None
+    for p in range(32):
+        w = h*10**(p-16)
+        try:
+            gen_rect_mesh_with_perturbed_vertices(
+                a=(-size/2,), b=(size/2,), nelements_per_axis=(nelems,),
+                perturb_amount=w)
+        except InconsistentVerticesError:
+            if p > 0:
+                crit_perturb = w/10
+            break
+    if crit_perturb is None:
+        raise RuntimeError("failed to find critical vertex perturbation amount")
+
+    # Scale invariance
+    nelems = 8
+    for p in range(32):
+        h = 10**(p-16)
+        size = h*nelems
+        perturb = crit_perturb*h
+        gen_rect_mesh_with_perturbed_vertices(
+            a=(-size/2,)*3, b=(size/2,)*3, nelements_per_axis=(nelems,)*3,
+            perturb_amount=perturb)
+        if 10*perturb > tol:
+            with pytest.raises(InconsistentVerticesError):
+                gen_rect_mesh_with_perturbed_vertices(
+                    a=(-size/2,)*3, b=(size/2,)*3, nelements_per_axis=(nelems,)*3,
+                    perturb_amount=10*perturb)
+
+    # Translation invariance
+    h = 1
+    nelems = 8
+    size = h*nelems
+    for p in range(10):
+        shift = 10**p-1
+        perturb = crit_perturb*(size/2 + shift)/(size/2)
+        gen_rect_mesh_with_perturbed_vertices(
+            a=(shift-size/2,)*3, b=(shift+size/2,)*3,
+            nelements_per_axis=(nelems,)*3,
+            perturb_amount=perturb)
+        with pytest.raises(InconsistentVerticesError):
+            gen_rect_mesh_with_perturbed_vertices(
+                a=(shift-size/2,)*3, b=(shift+size/2,)*3,
+                nelements_per_axis=(nelems,)*3,
+                perturb_amount=10*perturb)
+
+    # Aspect ratio invariance
+    h = 1
+    nelems = 8
+    size = h*nelems
+    for p in range(10):
+        h_x = 10**p * h
+        size_x = h_x * nelems
+        perturb = crit_perturb*h_x
+        gen_rect_mesh_with_perturbed_vertices(
+            a=(-size_x/2,) + (-size/2,)*2,
+            b=(size_x/2,) + (size/2,)*2,
+            nelements_per_axis=(nelems,)*3,
+            perturb_amount=perturb)
+        with pytest.raises(InconsistentVerticesError):
+            gen_rect_mesh_with_perturbed_vertices(
+                a=(-size_x/2,) + (-size/2,)*2,
+                b=(size_x/2,) + (size/2,)*2,
+                nelements_per_axis=(nelems,)*3,
+                perturb_amount=10*perturb)
+
+    # Mesh size relative to element size invariance
+    h = 1
+    for p in range(5):
+        nelems = 2**(5-p)
+        size = h*nelems
+        perturb = crit_perturb
+        gen_rect_mesh_with_perturbed_vertices(
+            a=(-size/2,)*3, b=(size/2,)*3, nelements_per_axis=(nelems,)*3,
+            perturb_amount=perturb)
+        with pytest.raises(InconsistentVerticesError):
+            gen_rect_mesh_with_perturbed_vertices(
+                a=(-size/2,)*3, b=(size/2,)*3, nelements_per_axis=(nelems,)*3,
+                perturb_amount=10*perturb)
+
+    # Zero-D elements
+    h = 1
+    nelems = 7
+    size = h*nelems
+    vol_mesh = mgen.generate_regular_rect_mesh(
+        a=(-size/2,), b=(size/2,),
+        nelements_per_axis=(nelems,))
+    from meshmode.discretization import Discretization
+    group_factory = default_simplex_group_factory(1, 1)
+    vol_discr = Discretization(actx, vol_mesh, group_factory)
+    from meshmode.discretization.connection import (
+        FACE_RESTR_ALL,
+        make_face_restriction)
+    make_face_restriction(
+        actx, vol_discr, group_factory, FACE_RESTR_ALL, per_face_groups=False)
+
+    # Zero-D elements at the origin
+    h = 1
+    nelems = 8
+    size = h*nelems
+    vol_mesh = mgen.generate_regular_rect_mesh(
+        a=(-size/2,), b=(size/2,),
+        nelements_per_axis=(nelems,))
+    group_factory = default_simplex_group_factory(1, 1)
+    vol_discr = Discretization(actx, vol_mesh, group_factory)
+    make_face_restriction(
+        actx, vol_discr, group_factory, FACE_RESTR_ALL, per_face_groups=False)
+
+    # Element vertex indices rotated
+    with pytest.raises(InconsistentVerticesError):
+        vol_mesh_unrotated = mgen.generate_regular_rect_mesh(
+            a=(-1,)*2, b=(1,)*2,
+            nelements_per_axis=(8,)*2)
+        vol_mesh = vol_mesh_unrotated.copy(  # noqa: F841
+            groups=[
+                replace(
+                    grp,
+                    vertex_indices=np.roll(grp.vertex_indices, 1, axis=1))
+                for grp in vol_mesh_unrotated.groups])
+
+# }}}
+
+
 # {{{ mesh boundary gluing
 
 @pytest.mark.parametrize("use_tree", [False, True])
@@ -1258,6 +1411,69 @@ def test_glued_mesh_offset_only():
 
     assert lower_grp.aff_map == map_lower_to_upper
     assert upper_grp.aff_map == map_upper_to_lower
+
+# }}}
+
+
+# {{{ test_mesh_grid
+
+@pytest.mark.parametrize("mesh_name", ["starfish3", "dumbbell", "torus"])
+@pytest.mark.parametrize("has_offset", [True, False])
+def test_mesh_grid(actx_factory, mesh_name, has_offset, visualize=False):
+
+    target_order = 4
+    if mesh_name == "starfish3":
+        nelements = 128
+        mesh = mgen.make_curve_mesh(
+            mgen.starfish3,
+            np.linspace(0.0, 1.0, nelements + 1),
+            order=target_order,
+            )
+        offset = (np.array([5, 0]), np.array([2.5, 3.0]))
+    elif mesh_name == "dumbbell":
+        nelements = 512
+        mesh = mgen.make_curve_mesh(
+            partial(mgen.wobbly_dumbbell, 0.01, 0.99, 1, 100),
+            np.linspace(0.0, 1.0, nelements + 1),
+            order=target_order,
+            )
+        offset = (np.array([3, 0]), np.array([0, 1]))
+    elif mesh_name == "torus":
+        mesh = mgen.generate_torus(2.0, 1.0, order=target_order)
+        offset = (np.array([6.5, 0, 0]), np.array([0, 6.5, 0]), np.array([0, 0, 3]))
+    else:
+        raise ValueError(f"unknown mesh name: '{mesh_name}'")
+
+    from meshmode.mesh.processing import make_mesh_grid
+    shape = (6, 3, 2)[:mesh.ambient_dim]
+    mgrid = make_mesh_grid(
+        mesh,
+        shape=shape,
+        offset=offset if has_offset else None,
+        skip_tests=False
+        )
+
+    from pytools import product
+    m = len(mgrid.groups)
+    assert m == product(shape)
+
+    def separated(x, y):
+        return np.all(
+            np.linalg.norm(x[:, :, None] - y[:, None, :], axis=0) > 0.1
+            )
+
+    assert all([
+        separated(mgrid.groups[i].nodes, mgrid.groups[j].nodes)
+        for i, j in zip(range(m), range(m)) if i != j])
+
+    if not visualize:
+        return
+
+    from meshmode.mesh.visualization import vtk_visualize_mesh
+    actx = actx_factory()
+    vtk_visualize_mesh(actx, mgrid,
+            f"mesh_grid_{mesh_name}_{has_offset}.vtu".lower(),
+            vtk_high_order=False, overwrite=True)
 
 # }}}
 

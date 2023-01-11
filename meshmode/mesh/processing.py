@@ -1,3 +1,5 @@
+# mypy: disallow-untyped-defs
+
 __copyright__ = "Copyright (C) 2014 Andreas Kloeckner"
 
 __license__ = """
@@ -21,8 +23,9 @@ THE SOFTWARE.
 """
 
 from functools import reduce
-from numbers import Real
-from typing import Optional, Union, Tuple, Mapping, List, Set, Sequence
+from typing import (
+    Callable, Dict, Optional, Union, Tuple, Mapping, List, Set, Sequence,
+    )
 
 from dataclasses import dataclass
 
@@ -42,6 +45,7 @@ from meshmode.mesh import (
     InterPartAdjacencyGroup
 )
 
+from meshmode.mesh import _FaceIDs
 from meshmode.mesh.tools import AffineMap
 
 
@@ -55,6 +59,7 @@ __doc__ = """
 .. autofunction:: perform_flips
 .. autofunction:: find_bounding_box
 .. autofunction:: merge_disjoint_meshes
+.. autofunction:: make_mesh_grid
 .. autofunction:: split_mesh_groups
 .. autofunction:: glue_mesh_boundaries
 
@@ -64,7 +69,9 @@ __doc__ = """
 """
 
 
-def find_group_indices(groups, meshwide_elems):
+def find_group_indices(
+        groups: List[MeshElementGroup],
+        meshwide_elems: np.ndarray) -> np.ndarray:
     """
     :arg groups: A list of :class:`~meshmode.mesh.MeshElementGroup` instances
         that contain *meshwide_elems*.
@@ -187,7 +194,7 @@ def _get_connected_parts(
         mesh: Mesh,
         part_id_to_part_index: Mapping[PartID, int],
         global_elem_to_part_elem: np.ndarray,
-        self_part_id: PartID) -> "Set[PartID]":
+        self_part_id: PartID) -> Set[PartID]:
     """
     Find the parts that are connected to the current part.
 
@@ -526,7 +533,7 @@ def _get_mesh_part(
 def partition_mesh(
         mesh: Mesh,
         part_id_to_elements: Mapping[PartID, np.ndarray],
-        return_parts: Optional[Sequence[PartID]] = None) -> "Mapping[PartID, Mesh]":
+        return_parts: Optional[Sequence[PartID]] = None) -> Mapping[PartID, Mesh]:
     """
     :arg mesh: A :class:`~meshmode.mesh.Mesh` to be partitioned.
     :arg part_id_to_elements: A :class:`dict` mapping a part identifier to
@@ -550,10 +557,13 @@ def partition_mesh(
 
 # {{{ orientations
 
-def find_volume_mesh_element_group_orientation(vertices, grp):
-    """Return a positive floating point number for each positively
-    oriented element, and a negative floating point number for
-    each negatively oriented element.
+def find_volume_mesh_element_group_orientation(
+        vertices: np.ndarray,
+        grp: MeshElementGroup) -> np.ndarray:
+    """
+    :returns: a positive floating point number for each positively
+        oriented element, and a negative floating point number for
+        each negatively oriented element.
     """
 
     from meshmode.mesh import SimplexElementGroup
@@ -600,7 +610,9 @@ def find_volume_mesh_element_group_orientation(vertices, grp):
     return (outer_prod.I | outer_prod).as_scalar()
 
 
-def find_volume_mesh_element_orientations(mesh, tolerate_unimplemented_checks=False):
+def find_volume_mesh_element_orientations(
+        mesh: Mesh, *,
+        tolerate_unimplemented_checks: bool = False) -> np.ndarray:
     """Return a positive floating point number for each positively
     oriented element, and a negative floating point number for
     each negatively oriented element.
@@ -634,13 +646,12 @@ def find_volume_mesh_element_orientations(mesh, tolerate_unimplemented_checks=Fa
     return result
 
 
-def test_volume_mesh_element_orientations(mesh):
+def test_volume_mesh_element_orientations(mesh: Mesh) -> bool:
     area_elements = find_volume_mesh_element_orientations(
             mesh, tolerate_unimplemented_checks=True)
-
     valid = ~np.isnan(area_elements)
 
-    return (area_elements[valid] > 0).all()
+    return bool(np.all(area_elements[valid] > 0))
 
 # }}}
 
@@ -648,7 +659,10 @@ def test_volume_mesh_element_orientations(mesh):
 # {{{ flips
 
 
-def get_simplex_element_flip_matrix(order, unit_nodes, permutation=None):
+def get_simplex_element_flip_matrix(
+        order: int,
+        unit_nodes: np.ndarray,
+        permutation: Optional[Tuple[int, ...]] = None) -> np.ndarray:
     """
     Generate a resampling matrix that corresponds to a
     permutation of the barycentric coordinates being applied.
@@ -700,7 +714,10 @@ def get_simplex_element_flip_matrix(order, unit_nodes, permutation=None):
     return flip_matrix
 
 
-def flip_simplex_element_group(vertices, grp, grp_flip_flags):
+def flip_simplex_element_group(
+        vertices: np.ndarray,
+        grp: MeshElementGroup,
+        grp_flip_flags: np.ndarray) -> MeshElementGroup:
     from meshmode.mesh import SimplexElementGroup
 
     if not isinstance(grp, SimplexElementGroup):
@@ -709,11 +726,14 @@ def flip_simplex_element_group(vertices, grp, grp_flip_flags):
 
     # Swap the first two vertices on elements to be flipped.
 
-    new_vertex_indices = grp.vertex_indices.copy()
-    new_vertex_indices[grp_flip_flags, 0] \
-            = grp.vertex_indices[grp_flip_flags, 1]
-    new_vertex_indices[grp_flip_flags, 1] \
-            = grp.vertex_indices[grp_flip_flags, 0]
+    if grp.vertex_indices is not None:
+        new_vertex_indices = grp.vertex_indices.copy()
+        new_vertex_indices[grp_flip_flags, 0] \
+                = grp.vertex_indices[grp_flip_flags, 1]
+        new_vertex_indices[grp_flip_flags, 1] \
+                = grp.vertex_indices[grp_flip_flags, 0]
+    else:
+        new_vertex_indices = None
 
     # Apply the flip matrix to the nodes.
     flip_matrix = get_simplex_element_flip_matrix(grp.order, grp.unit_nodes)
@@ -722,12 +742,14 @@ def flip_simplex_element_group(vertices, grp, grp_flip_flags):
             "ij,dej->dei",
             flip_matrix, grp.nodes[:, grp_flip_flags])
 
-    return SimplexElementGroup.make_group(
-            grp.order, new_vertex_indices, new_nodes,
-            unit_nodes=grp.unit_nodes)
+    from dataclasses import replace
+    return replace(grp, vertex_indices=new_vertex_indices, nodes=new_nodes)
 
 
-def perform_flips(mesh, flip_flags, skip_tests=False):
+def perform_flips(
+        mesh: Mesh,
+        flip_flags: np.ndarray,
+        skip_tests: bool = False) -> Mesh:
     """
     :arg flip_flags: A :class:`numpy.ndarray` with
         :attr:`meshmode.mesh.Mesh.nelements` entries
@@ -760,7 +782,7 @@ def perform_flips(mesh, flip_flags, skip_tests=False):
 
 # {{{ bounding box
 
-def find_bounding_box(mesh):
+def find_bounding_box(mesh: Mesh) -> Tuple[np.ndarray, np.ndarray]:
     """
     :return: a tuple *(min, max)*, each consisting of a :class:`numpy.ndarray`
         indicating the minimal and maximal extent of the geometry along each axis.
@@ -776,7 +798,10 @@ def find_bounding_box(mesh):
 
 # {{{ merging
 
-def merge_disjoint_meshes(meshes, skip_tests=False, single_group=False):
+def merge_disjoint_meshes(
+        meshes: Sequence[Mesh], *,
+        skip_tests: bool = False,
+        single_group: bool = False) -> Mesh:
     if not meshes:
         raise ValueError("must pass at least one mesh")
 
@@ -812,60 +837,46 @@ def merge_disjoint_meshes(meshes, skip_tests=False, single_group=False):
     # {{{ assemble new groups list
 
     nodal_adjacency = None
+    if any(mesh._nodal_adjacency is not None for mesh in meshes):
+        nodal_adjacency = False
+
     facial_adjacency_groups = None
+    if any(mesh._facial_adjacency_groups is not None for mesh in meshes):
+        facial_adjacency_groups = False
 
+    from dataclasses import replace
     if single_group:
-        grp_cls = None
-        order = None
-        unit_nodes = None
-        nodal_adjacency = None
-        facial_adjacency_groups = None
+        from pytools import single_valued
+        ref_group = single_valued(
+            [group for mesh in meshes for group in mesh.groups],
+            lambda x, y: (
+                type(x) == type(y)
+                and x.order == y.order
+                and np.array_equal(x.unit_nodes, y.unit_nodes)
+                ))
 
-        for mesh in meshes:
-            if mesh._nodal_adjacency is not None:
-                nodal_adjacency = False
-            if mesh._facial_adjacency_groups is not None:
-                facial_adjacency_groups = False
-
+        group_vertex_indices = []
+        group_nodes = []
+        for mesh, vert_base in zip(meshes, vert_bases):
             for group in mesh.groups:
-                if grp_cls is None:
-                    grp_cls = type(group)
-                    order = group.order
-                    unit_nodes = group.unit_nodes
-                else:
-                    assert type(group) == grp_cls
-                    assert group.order == order
-                    assert np.array_equal(unit_nodes, group.unit_nodes)
+                assert group.vertex_indices is not None
+                group_vertex_indices.append(group.vertex_indices + vert_base)
+                group_nodes.append(group.nodes)
 
-        vertex_indices = np.vstack([
-            group.vertex_indices + vert_base
-            for mesh, vert_base in zip(meshes, vert_bases)
-            for group in mesh.groups])
-        nodes = np.hstack([
-            group.nodes
-            for mesh in meshes
-            for group in mesh.groups])
+        vertex_indices = np.vstack(group_vertex_indices)
+        nodes = np.hstack(group_nodes)
 
         if not nodes.flags.c_contiguous:
             # hstack stopped producing C-contiguous arrays in numpy 1.14
             nodes = nodes.copy(order="C")
 
-        new_groups = [
-                grp_cls(order, vertex_indices, nodes, unit_nodes=unit_nodes)]
+        new_groups = [replace(ref_group, vertex_indices=vertex_indices, nodes=nodes)]
 
     else:
         new_groups = []
-        nodal_adjacency = None
-        facial_adjacency_groups = None
-
         for mesh, vert_base in zip(meshes, vert_bases):
-            if mesh._nodal_adjacency is not None:
-                nodal_adjacency = False
-            if mesh._facial_adjacency_groups is not None:
-                facial_adjacency_groups = False
-
-            from dataclasses import replace
             for group in mesh.groups:
+                assert group.vertex_indices is not None
                 new_vertex_indices = group.vertex_indices + vert_base
                 new_group = replace(group, vertex_indices=new_vertex_indices,
                                     element_nr_base=None, node_nr_base=None)
@@ -874,19 +885,23 @@ def merge_disjoint_meshes(meshes, skip_tests=False, single_group=False):
 
     # }}}
 
-    return Mesh(vertices, new_groups, skip_tests=skip_tests,
+    return Mesh(
+            vertices, new_groups,
+            skip_tests=skip_tests,
             nodal_adjacency=nodal_adjacency,
             facial_adjacency_groups=facial_adjacency_groups,
-            is_conforming=all(
-                mesh.is_conforming
-                for mesh in meshes))
+            is_conforming=all(mesh.is_conforming for mesh in meshes))
 
 # }}}
 
 
 # {{{ split meshes
 
-def split_mesh_groups(mesh, element_flags, return_subgroup_mapping=False):
+def split_mesh_groups(
+        mesh: Mesh,
+        element_flags: np.ndarray,
+        return_subgroup_mapping: bool = False,
+        ) -> Union[Mesh, Tuple[Mesh, Dict[Tuple[int, int], int]]]:
     """Split all the groups in *mesh* according to the values of
     *element_flags*. The element flags are expected to be integers
     defining, for each group, how the elements are to be split into
@@ -910,13 +925,14 @@ def split_mesh_groups(mesh, element_flags, return_subgroup_mapping=False):
     """
     assert element_flags.shape == (mesh.nelements,)
 
-    new_groups = []
+    new_groups: List[MeshElementGroup] = []
     subgroup_to_group_map = {}
 
     from dataclasses import replace
     for igrp, (base_element_nr, grp) in enumerate(
             zip(mesh.base_element_nrs, mesh.groups)
             ):
+        assert grp.vertex_indices is not None
         grp_flags = element_flags[base_element_nr:base_element_nr + grp.nelements]
         unique_grp_flags = np.unique(grp_flags)
 
@@ -947,8 +963,12 @@ def split_mesh_groups(mesh, element_flags, return_subgroup_mapping=False):
 # {{{ vertex matching
 
 def _match_vertices(
-        mesh, src_vertex_indices, tgt_vertex_indices, *, aff_map=None, tol=1e-12,
-        use_tree=None):
+        mesh: Mesh,
+        src_vertex_indices: np.ndarray,
+        tgt_vertex_indices: np.ndarray, *,
+        aff_map: Optional[AffineMap] = None,
+        tol: float = 1e-12,
+        use_tree: Optional[bool] = None) -> np.ndarray:
     if aff_map is None:
         aff_map = AffineMap()
 
@@ -1040,8 +1060,7 @@ class BoundaryPairMapping:
     aff_map: AffineMap
 
 
-def _get_boundary_face_ids(mesh, btag):
-    from meshmode.mesh import _FaceIDs
+def _get_boundary_face_ids(mesh: Mesh, btag: int) -> _FaceIDs:
     face_ids_per_boundary_group = []
     for igrp, fagrp_list in enumerate(mesh.facial_adjacency_groups):
         matching_bdry_grps = [
@@ -1059,7 +1078,7 @@ def _get_boundary_face_ids(mesh, btag):
     return _concatenate_face_ids(face_ids_per_boundary_group)
 
 
-def _get_face_vertex_indices(mesh, face_ids):
+def _get_face_vertex_indices(mesh: Mesh, face_ids: _FaceIDs) -> np.ndarray:
     max_face_vertices = max(
         len(ref_fvi)
         for grp in mesh.groups
@@ -1067,22 +1086,28 @@ def _get_face_vertex_indices(mesh, face_ids):
 
     face_vertex_indices_per_group = []
     for igrp, grp in enumerate(mesh.groups):
+        assert grp.vertex_indices is not None
+
         belongs_to_group = face_ids.groups == igrp
         faces = face_ids.faces[belongs_to_group]
         elements = face_ids.elements[belongs_to_group]
         face_vertex_indices = np.full(
             (len(faces), max_face_vertices), -1,
             dtype=mesh.vertex_id_dtype)
+
         for fid, ref_fvi in enumerate(grp.face_vertex_indices()):
             is_face = faces == fid
             face_vertex_indices[is_face, :len(ref_fvi)] = (
                 grp.vertex_indices[elements[is_face], :][:, ref_fvi])
+
         face_vertex_indices_per_group.append(face_vertex_indices)
 
     return np.stack(face_vertex_indices_per_group)
 
 
-def _match_boundary_faces(mesh, bdry_pair_mapping, tol, *, use_tree=None):
+def _match_boundary_faces(
+        mesh: Mesh, bdry_pair_mapping: BoundaryPairMapping, tol: float, *,
+        use_tree: Optional[bool] = None) -> Tuple[_FaceIDs, _FaceIDs]:
     """
     Given a :class:`BoundaryPairMapping` *bdry_pair_mapping*, return the
     correspondence between faces of the two boundaries (expressed as a pair of
@@ -1146,9 +1171,12 @@ def _match_boundary_faces(mesh, bdry_pair_mapping, tol, *, use_tree=None):
     from meshmode.mesh import _concatenate_face_ids
     face_ids = _concatenate_face_ids([bdry_m_face_ids, bdry_n_face_ids])
 
-    max_vertex_index = max([np.max(grp.vertex_indices) for grp in mesh.groups])
-    vertex_index_map, = np.indices((max_vertex_index+1,),
-        dtype=mesh.element_id_dtype)
+    max_vertex_index = 0
+    for grp in mesh.groups:
+        assert grp.vertex_indices is not None
+        max_vertex_index = max(max_vertex_index, np.max(grp.vertex_indices))
+    vertex_index_map, = np.indices(
+        (max_vertex_index + 1,), dtype=mesh.element_id_dtype)
     vertex_index_map[bdry_m_vertex_indices] = matched_bdry_n_vertex_indices
 
     from meshmode.mesh import _match_faces_by_vertices
@@ -1160,7 +1188,6 @@ def _match_boundary_faces(mesh, bdry_pair_mapping, tol, *, use_tree=None):
     # Since the first boundary's faces come before the second boundary's in
     # face_ids, the first boundary's faces should all be in the first row of the
     # result of _match_faces_by_vertices
-    from meshmode.mesh import _FaceIDs
     return (
         _FaceIDs(
             groups=face_ids.groups[face_index_pairs[0, :]],
@@ -1176,7 +1203,10 @@ def _match_boundary_faces(mesh, bdry_pair_mapping, tol, *, use_tree=None):
 
 # {{{ boundary gluing
 
-def glue_mesh_boundaries(mesh, bdry_pair_mappings_and_tols, *, use_tree=None):
+def glue_mesh_boundaries(
+        mesh: Mesh,
+        bdry_pair_mappings_and_tols: List[Tuple[BoundaryPairMapping, float]], *,
+        use_tree: Optional[bool] = None) -> Mesh:
     """
     Create a new mesh from *mesh* in which one or more pairs of boundaries are
     "glued" together such that the boundary surfaces become part of the interior
@@ -1197,6 +1227,10 @@ def glue_mesh_boundaries(mesh, bdry_pair_mappings_and_tols, *, use_tree=None):
     :arg use_tree: Optional argument indicating whether to use a spatial binary
         search tree or a (quadratic) numpy algorithm when matching vertices.
     """
+    if any(grp.vertex_indices is None for grp in mesh.groups):
+        raise ValueError(
+            "gluing mesh boundaries requires 'vertex_indices' in all groups")
+
     glued_btags = {
         btag
         for mapping, _ in bdry_pair_mappings_and_tols
@@ -1210,10 +1244,12 @@ def glue_mesh_boundaries(mesh, bdry_pair_mappings_and_tols, *, use_tree=None):
             btag_pair = (mapping.from_btag, mapping.to_btag)
         else:
             btag_pair = (mapping.to_btag, mapping.from_btag)
+
         if btag_pair in glued_btag_pairs:
             raise ValueError(
                 "multiple mappings detected for boundaries "
                 f"{btag_pair[0]} and {btag_pair[1]}.")
+
         glued_btag_pairs.add(btag_pair)
 
     face_id_pairs_for_mapping = [
@@ -1277,17 +1313,16 @@ def glue_mesh_boundaries(mesh, bdry_pair_mappings_and_tols, *, use_tree=None):
 
 # {{{ map
 
-def map_mesh(mesh, f):  # noqa
+def map_mesh(mesh: Mesh, f: Callable[[np.ndarray], np.ndarray]) -> Mesh:
     """Apply the map *f* to the mesh. *f* needs to accept and return arrays of
     shape ``(ambient_dim, npoints)``."""
 
     if mesh._facial_adjacency_groups is not None:
         has_adj_maps = any([
-            hasattr(fagrp, "aff_map")
-            and (fagrp.aff_map.matrix is not None
-                or fagrp.aff_map.offset is not None)
+            fagrp.aff_map.matrix is not None or fagrp.aff_map.offset is not None
             for fagrp_list in mesh.facial_adjacency_groups
-            for fagrp in fagrp_list])
+            for fagrp in fagrp_list if hasattr(fagrp, "aff_map")
+            ])
         if has_adj_maps:
             raise ValueError("cannot apply a general map to a mesh that has "
                 "affine mappings in its facial adjacency. If the map is affine, "
@@ -1322,9 +1357,10 @@ def map_mesh(mesh, f):  # noqa
 
 # {{{ affine map
 
-def affine_map(mesh,
+def affine_map(
+        mesh: Mesh,
         A: Optional[Union[np.generic, np.ndarray]] = None,    # noqa: N803
-        b: Optional[Union[np.generic, np.ndarray]] = None):
+        b: Optional[Union[np.generic, np.ndarray]] = None) -> Mesh:
     """Apply the affine map :math:`f(x) = A x + b` to the geometry of *mesh*."""
 
     if A is not None and not isinstance(A, np.ndarray):
@@ -1372,11 +1408,12 @@ def affine_map(mesh,
         # where:
         # G' = G
         # h' = Ah + (I - G)b
-        def compute_new_map(old_map):
+        def compute_new_map(old_map: AffineMap) -> AffineMap:
             if old_map.matrix is not None:
                 matrix = old_map.matrix.copy()
             else:
                 matrix = None
+
             if old_map.offset is not None:
                 if A is not None:
                     offset = A @ old_map.offset
@@ -1386,6 +1423,7 @@ def affine_map(mesh,
                     offset += b - matrix @ b
             else:
                 offset = None
+
             return AffineMap(matrix, offset)
 
         from dataclasses import replace
@@ -1394,10 +1432,11 @@ def affine_map(mesh,
             fagrp_list = []
             for old_fagrp in old_fagrp_list:
                 if hasattr(old_fagrp, "aff_map"):
-                    aff_map = compute_new_map(old_fagrp.aff_map)
-                    fagrp_list.append(replace(old_fagrp, aff_map=aff_map))
+                    new_fields = {"aff_map": compute_new_map(old_fagrp.aff_map)}
                 else:
-                    fagrp_list.append(replace(old_fagrp))
+                    new_fields = {}
+
+                fagrp_list.append(replace(old_fagrp, **new_fields))
             facial_adjacency_groups.append(fagrp_list)
 
     else:
@@ -1411,7 +1450,8 @@ def affine_map(mesh,
             is_conforming=mesh.is_conforming)
 
 
-def _get_rotation_matrix_from_angle_and_axis(theta, axis):
+def _get_rotation_matrix_from_angle_and_axis(
+        theta: float, axis: np.ndarray) -> np.ndarray:
     # https://en.wikipedia.org/wiki/Rotation_matrix#Rotation_matrix_from_axis_and_angle
     cos_t = np.cos(theta)
     sin_t = np.sin(theta)
@@ -1432,9 +1472,10 @@ def _get_rotation_matrix_from_angle_and_axis(theta, axis):
         ]])
 
 
-def rotate_mesh_around_axis(mesh, *,
-        theta: Real,
-        axis: Optional[np.ndarray] = None):
+def rotate_mesh_around_axis(
+        mesh: Mesh, *,
+        theta: float,
+        axis: Optional[np.ndarray] = None) -> Mesh:
     """Rotate the mesh by *theta* radians around the axis *axis*.
 
     :arg axis: a (not necessarily unit) vector. By default, the rotation is
@@ -1454,6 +1495,50 @@ def rotate_mesh_around_axis(mesh, *,
 
     mat = _get_rotation_matrix_from_angle_and_axis(theta, axis)
     return affine_map(mesh, A=mat[:mesh.ambient_dim, :mesh.ambient_dim])
+
+# }}}
+
+
+# {{{ make_mesh_grid
+
+def make_mesh_grid(
+        mesh: Mesh, *,
+        shape: Tuple[int, ...],
+        offset: Optional[Tuple[np.ndarray, ...]] = None,
+        skip_tests: bool = False) -> Mesh:
+    """Constructs a grid of copies of *mesh*, with *shape* copies in each
+    dimensions at the given *offset*.
+
+    :returns: a merged mesh representing the grid.
+    """
+
+    if len(shape) != mesh.ambient_dim:
+        raise ValueError("grid shape length must match mesh ambient dimension")
+
+    if offset is None:
+        bmin, bmax = find_bounding_box(mesh)
+
+        from pytools import wandering_element
+        size = bmax - bmin
+        offset = tuple([
+            np.array(e_i) * (size[i] + 0.25 * size[i])
+            for i, e_i in enumerate(wandering_element(mesh.ambient_dim))
+            ])
+
+    if len(offset) != mesh.ambient_dim:
+        raise ValueError("must provide an offset per dimension")
+
+    if not all(o.size == mesh.ambient_dim for o in offset):
+        raise ValueError("offsets must have the mesh dimension")
+
+    from itertools import product
+    meshes = []
+
+    for index in product(*(range(n) for n in shape)):
+        b = sum([i * o for i, o in zip(index, offset)])
+        meshes.append(affine_map(mesh, b=b))
+
+    return merge_disjoint_meshes(meshes, skip_tests=skip_tests)
 
 # }}}
 
