@@ -1493,16 +1493,21 @@ class FusionContractorArrayContext(
 
         # {{{ remove any PartID tags
 
-        from pytato.distributed import PartIDTag
+        # FIXME: Remove after https://github.com/inducer/pytato/pull/393 goes in
+        try:
+            from pytato.distributed import PartIDTag
 
-        def remove_part_id_tags(expr):
-            if isinstance(expr, pt.Array) and expr.tags_of_type(PartIDTag):
-                tag, = expr.tags_of_type(PartIDTag)
-                return expr.without_tags(tag)
-            else:
-                return expr
+            def remove_part_id_tags(expr):
+                if isinstance(expr, pt.Array) and expr.tags_of_type(PartIDTag):
+                    tag, = expr.tags_of_type(PartIDTag)
+                    return expr.without_tags(tag)
+                else:
+                    return expr
+        except ImportError:
+            remove_part_id_tags = None
 
-        dag = pt.transform.map_and_copy(dag, remove_part_id_tags)
+        if remove_part_id_tags is not None:
+            dag = pt.transform.map_and_copy(dag, remove_part_id_tags)
 
         # }}}
 
