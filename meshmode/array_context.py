@@ -34,6 +34,13 @@ from arraycontext.pytest import (
         _PytestPytatoPyOpenCLArrayContextFactory,
         register_pytest_array_context_factory)
 
+from meshmode.arraycontext_extras.batched_einsum import (
+    BatchedEinsumPytatoPyOpenCLArrayContext as BaseBatchedEinsumPytatoPyOpenCLArrayContext)  # noqa: E501
+from meshmode.arraycontext_extras.split_actx import SplitPytatoPyOpenCLArrayContext
+
+from pytools.tag import Tag
+from typing import Optional, Callable, Any
+
 
 def thaw(actx, ary):
     warn("meshmode.array_context.thaw is deprecated. Use arraycontext.thaw instead. "
@@ -344,5 +351,77 @@ else:
 
 # }}}
 
+
+def _fused_loop_name_prefix_getter(tag: Tag) -> str:
+    from meshmode.transform_metadata import (
+        DiscretizationElementAxisTag,
+        DiscretizationFaceAxisTag,
+        DiscretizationDOFAxisTag,
+        DiscretizationAmbientDimAxisTag,
+        DiscretizationTopologicalDimAxisTag,
+        DiscretizationFlattenedDOFAxisTag,
+    )
+    if isinstance(tag, DiscretizationElementAxisTag):
+        return "iel"
+    elif isinstance(tag, DiscretizationFaceAxisTag):
+        return "iface"
+    elif isinstance(tag, DiscretizationDOFAxisTag):
+        return "idof"
+    elif isinstance(tag, DiscretizationAmbientDimAxisTag):
+        return "iambient_dim"
+    elif isinstance(tag, DiscretizationTopologicalDimAxisTag):
+        return "itopo_dim"
+    elif isinstance(tag, DiscretizationTopologicalDimAxisTag):
+        return "itopo_dim"
+    elif isinstance(tag, DiscretizationFlattenedDOFAxisTag):
+        return "iflatted_dofs"
+    else:
+        raise NotImplementedError(type(tag))
+
+
+class BatchedEinsumPytatoPyOpenCLArrayContext(
+        BaseBatchedEinsumPytatoPyOpenCLArrayContext):
+    def __init__(
+        self,
+        queue, allocator=None,
+        *,
+        fallback_to_no_fusion: bool = True,
+        compile_trace_callback: Optional[Callable[[Any, str, Any], None]] = None,
+        feinsum_db: Optional[str] = None,
+        log_loopy_statistics: bool = False,
+    ) -> None:
+        from meshmode.transform_metadata import DiscretizationEntityAxisTag
+        import feinsum as fnsm
+
+        super().__init__(
+            queue, allocator,
+            loop_fusion_axis_tag_t=DiscretizationEntityAxisTag,
+            fallback_to_no_fusion=fallback_to_no_fusion,
+            assume_all_indirection_maps_as_non_negative=True,
+            compile_trace_callback=compile_trace_callback,
+            feinsum_db=fnsm.DEFAULT_DB,
+            log_loopy_statistics=log_loopy_statistics,
+            fused_loop_name_prefix_getter=_fused_loop_name_prefix_getter
+        )
+
+
+class FusionContractorArrayContext(BatchedEinsumPytatoPyOpenCLArrayContext):
+    def __init__(self, *args, **kwargs):
+        from warnings import warn
+        warn("FusionContractorArrayContext is deprecated, use"
+             " 'BatchedEinsumPytatoPyOpenCLArraYContext' instead."
+             " This will be an error from June, 2023.",
+             DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
+
+
+class SingleGridWorkBalancingPytatoArrayContext(SplitPytatoPyOpenCLArrayContext):
+    def __init__(self, *args, **kwargs):
+        from warnings import warn
+        warn("SingleGridWorkBalancingPytatoArrayContext is deprecated, use"
+             " 'SplitPytatoPyOpenCLArrayContext' instead. This will be an"
+             " error from June, 2023.",
+             DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
 
 # vim: foldmethod=marker
