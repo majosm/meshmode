@@ -1246,7 +1246,8 @@ class FusionContractorArrayContext(
                 except StopIteration:
                     return expr
                 else:
-                    assert isinstance(expr, pt.InputArgumentBase)
+                    # See https://github.com/inducer/arraycontext/pull/229
+                    # assert isinstance(expr, pt.InputArgumentBase)
                     return expr.without_tags(fem_ensm_tag)
             else:
                 return expr
