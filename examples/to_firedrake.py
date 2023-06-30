@@ -51,7 +51,7 @@ def main():
 
     cl_ctx = cl.create_some_context()
     queue = cl.CommandQueue(cl_ctx)
-    actx = PyOpenCLArrayContext(queue)
+    actx = PyOpenCLArrayContext(queue, force_device_scalars=True)
 
     nel_1d = 16
     from meshmode.mesh.generation import generate_regular_rect_mesh
@@ -103,7 +103,7 @@ def main():
     sol = Function(cfd_fspace)
 
     a = inner(grad(u), grad(v)) * dx
-    rhs = Constant(0.0) * v * dx
+    rhs = inner(Constant(0.0), v) * dx
     bc_value = project(fd_candidate_sol, cfd_fspace)
     bc = DirichletBC(cfd_fspace, bc_value, "on_boundary")
     params = {"ksp_monitor": None}
