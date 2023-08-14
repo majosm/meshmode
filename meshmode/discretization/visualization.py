@@ -584,7 +584,7 @@ class Visualizer:
 
             args = tuple(nodes) + (field,)
 
-            # https://docs.enthought.com/mayavi/mayavi/auto/example_plotting_many_lines.html  # noqa
+            # https://docs.enthought.com/mayavi/mayavi/auto/example_plotting_many_lines.html  # noqa: E501
             src = mlab.pipeline.scalar_scatter(*args)
 
             src.mlab_source.dataset.lines = vis_connectivity.reshape(-1, 2)
@@ -736,7 +736,7 @@ class Visualizer:
 
             - Added *par_manifest_filename* and *par_file_names*.
             - Added *use_high_order*.
-        """ # noqa
+        """  # noqa: E501
 
         if use_high_order is None:
             use_high_order = False
@@ -1307,6 +1307,9 @@ def make_visualizer(actx, discr, vis_order=None,
                     stacklevel=2)
 
             vis_discr = discr
+        else:
+            if vis_order is None:
+                raise ValueError("A 'vis_order' must be provided for interpolation.")
 
     from meshmode.discretization.connection import make_same_mesh_connection
     return Visualizer(
