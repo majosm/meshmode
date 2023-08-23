@@ -178,7 +178,7 @@ class InterpolationBatch(Generic[ArrayT]):
                     actx.from_numpy(
                         np_from_el_present.astype(np.int8))))
         full_from_element_indices = actx.freeze(
-                actx.tag(NameHint("from_el_indices"),
+                actx.tag(NameHint("from_el_indices_a"),
                     actx.from_numpy(np_full_from_element_indices)))
 
         self._global_from_element_indices_cache = (
@@ -557,6 +557,10 @@ class DirectDiscretizationConnection(DiscretizationConnection):
             from_el_present = (from_el_indices != -1)
             from_el_indices[~from_el_present] = 0
 
+            from mpi4py import MPI
+            if MPI.COMM_WORLD.rank == 0:
+                print(f"_per_target_group_pick_info: {from_el_indices.shape=}")
+
             result.append(
                     _FromGroupPickData(
                         from_group_index=source_group_index,
@@ -575,7 +579,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                                         from_el_present.astype(np.int8))))),
                         from_element_indices=actx.freeze(
                             actx.tag_axis(0, DiscretizationElementAxisTag(),
-                                actx.tag(NameHint("from_el_indices"),
+                                actx.tag(NameHint("from_el_indices_b"),
                                     actx.from_numpy(from_el_indices)))),
                         is_surjective=from_el_present.all()
                         ))

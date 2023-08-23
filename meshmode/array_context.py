@@ -1060,6 +1060,13 @@ def _get_iel_to_idofs(kernel):
                    for dof_insn in kernel.iname_to_insns()[idof]):
                 pass
             else:
+                print(f"_get_iel_to_idofs: {insn.tags=}")
+                print(f"_get_iel_to_idofs: {kernel.inames[iel]=}")
+                print(f"_get_iel_to_idofs: {kernel.inames[idof]=}")
+                for dof_insn in kernel.iname_to_insns()[idof]:
+                    if iel not in kernel.id_to_insn[dof_insn].within_inames:
+                        print(f"_get_iel_to_idofs: {str(kernel.id_to_insn[dof_insn])=}")
+                        print(f"_get_iel_to_idofs: {kernel.id_to_insn[dof_insn]=}")
                 raise NotImplementedError("The <iel,idof> loop "
                                           f"'{insn.within_inames}' has the idof-loop"
                                           " that's not nested within the iel-loop.")
@@ -1079,8 +1086,20 @@ def _get_iel_to_idofs(kernel):
                 raise NotImplementedError("Could not fit into  <iel,idof,iface>"
                                           " loop nest pattern.")
         else:
+            #print(f"{insn=}")
+            from mpi4py import MPI
+            if MPI.COMM_WORLD.rank == 0:
+                print(f"_get_iel_to_idofs: {insn.tags=}")
+                # tags = []
+                for iname in insn.within_inames:
+                    print(f"_get_iel_to_idofs: {iname=}, {kernel.inames[iname]=}")
+                    # tags.append(kernel.inames[iname].tags_of_type(DiscretizationEntityAxisTag))
+                # if len(tags) == 1:
+                #     tags = tags[0]
+                # print(f"_get_iel_to_idofs: {tags=}")
+                print(f"_get_iel_to_idofs: {str(insn)=}")
             raise NotImplementedError(f"Cannot fit loop nest '{insn.within_inames}'"
-                                      " into known set of loop-nest patterns.")
+                                      f" into known set of loop-nest patterns on rank {MPI.COMM_WORLD.rank}.")
 
     return pmap({iel: frozenset(idofs)
                  for iel, idofs in iel_to_idofs.items()})
@@ -1152,6 +1171,12 @@ def _prepare_kernel_for_parallelization(kernel):
             discr_tag, = kernel.iname_tags_of_type(iname,
                                                    DiscretizationEntityAxisTag)
             new_iname = vng(f"{discr_tag_to_prefix[type(discr_tag)]}_ensm{ieinsm}")
+            from mpi4py import MPI
+            if MPI.COMM_WORLD.rank == 3 and new_iname == "idof_ensm32":
+                print(f"_prepare_kernel_for_parallelization: {iname=}")
+                for insn_name in kernel.iname_to_insns()[iname]:
+                    insn = kernel.id_to_insn[insn_name]
+                    print(f"_prepare_kernel_for_parallelization: {str(insn)=}")
             new_inames.append(new_iname)
 
         kernel = lp.duplicate_inames(
@@ -1248,6 +1273,25 @@ class FusionContractorArrayContext(
 
     def transform_dag(self, dag):
         import pytato as pt
+
+        from mpi4py import MPI
+        if MPI.COMM_WORLD.rank == 0:
+            def print_hashes(d, name=""):
+                from pytato.array import DictOfNamedArrays
+                if isinstance(d, DictOfNamedArrays):
+                    for subname, ary_or_dict in d._data.items():
+                        print_hashes(ary_or_dict, name + subname)
+                else:
+#                     from pytato.tags import CreatedAt
+#                     created_at_tag, = d.tags_of_type(CreatedAt)
+                    if name != "":
+                        print(f"transform_dag: {name=}, {hash(d)=}")
+#                         print(f"transform_dag: {name=}, {created_at_tag.traceback=}")
+                    else:
+                        print(f"transform_dag: {hash(d)=}")
+#                         print(f"transform_dag: {created_at_tag.traceback=}")
+
+            print_hashes(dag)
 
         # {{{ Remove FEMEinsumTags that might have been propagated
 
