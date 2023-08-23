@@ -57,6 +57,13 @@ def _reshape_and_preserve_tags(
         return actx.tag(tags, ary.reshape(new_shape))
 
 
+def _nonempty_sum(vals):
+    result = vals[0]
+    for val in vals[1:]:
+        result = result + val
+    return result
+
+
 # {{{ interpolation batch
 
 @dataclass
@@ -788,7 +795,18 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                                     self.to_discr.groups[i_tgrp].nunit_dofs),
                                 **group_knl_kwargs)["result"])
 
-                group_array = sum(group_array_contributions)
+                if group_array_contributions:
+                    group_array = _nonempty_sum(group_array_contributions)
+                else:
+                    # If no batched data at all, return zeros for this
+                    # particular group array
+                    group_array = tag_axes(actx, {
+                            0: DiscretizationElementAxisTag(),
+                            1: DiscretizationDOFAxisTag()},
+                        actx.zeros(
+                            shape=(self.to_discr.groups[i_tgrp].nelements,
+                                   self.to_discr.groups[i_tgrp].nunit_dofs),
+                            dtype=ary.entry_dtype))
             elif cgrp.batches:
                 for i_batch, batch in enumerate(cgrp.batches):
                     if not len(batch.from_element_indices):
@@ -863,7 +881,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                     group_array_contributions.append(batch_result)
 
             if group_array_contributions:
-                group_array = sum(group_array_contributions)
+                group_array = _nonempty_sum(group_array_contributions)
             else:
                 # If no batched data at all, return zeros for this
                 # particular group array
