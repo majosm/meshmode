@@ -1036,6 +1036,20 @@ def _get_iel_to_idofs(kernel):
                 raise NotImplementedError(f"The <iel> loop {insn.within_inames}"
                                           " does not appear as a singly nested"
                                           " loop.")
+        elif ((len(insn.within_inames) > 1)
+                and (len(insn.within_inames & iel_inames) == 1)
+                and (len(insn.within_inames & (idim_inames | iface_inames))
+                     == (len(insn.within_inames) - 1))):
+            iel, = insn.within_inames & iel_inames
+            if all(kernel.id_to_insn[el_insn].within_inames == insn.within_inames
+                    for el_insn in kernel.iname_to_insns()[iel]):
+                # the iel here doesn't interfere with any idof i.e. we
+                # support parallelizing such loops.
+                pass
+            else:
+                raise NotImplementedError(f"The <iel> loop {insn.within_inames}"
+                                          " does not appear as a compatible nested"
+                                          " loop.")
         elif ((len(insn.within_inames) == 2)
               and (len(insn.within_inames & iel_inames) == 1)
               and (len(insn.within_inames & idof_inames) == 1)):
