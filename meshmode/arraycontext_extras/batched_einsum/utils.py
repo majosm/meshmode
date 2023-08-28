@@ -181,6 +181,10 @@ def apply_kennedy_fusion_with_batched_einsum_extension(
     bucket_to_inames: Dict[Tuple[EinsumWithAxesTagged, fnsm.EinsumAxisAccess],
                            Set[str]] = {}
 
+    import time
+
+    ts = time.time()
+
     for insn in kernel.instructions:
         if isinstance(insn, lp.Assignment):
             # {{{ get matching einsum/subst_map
@@ -236,9 +240,21 @@ def apply_kennedy_fusion_with_batched_einsum_extension(
             # TODO: should this be a ValueError?
             raise NotImplementedError
 
-    for _, inames in sorted(bucket_to_inames.items(),
-                            key=lambda x: (_get_fusion_order_key(x[0][1]),
-                                           sorted(x[1]))):
+    te = time.time()
+    print(f"apply_kennedy_fusion_with_..., loop 1: {te-ts}")
+
+    ts = time.time()
+
+    sorted_bucket_to_inames = sorted(
+        bucket_to_inames.items(),
+        key=lambda x: (_get_fusion_order_key(x[0][1]), sorted(x[1])))
+
+    te = time.time()
+    print(f"apply_kennedy_fusion_with_..., sorted_bucket_to_inames: {te-ts}")
+
+    ts = time.time()
+
+    for _, inames in sorted_bucket_to_inames:
         inames_tag, = kernel.iname_tags_of_type(next(iter(inames)),
                                                 tag_t)
         # TODO: Enable pylint once these routines have been upstreamed to loopy
@@ -249,6 +265,9 @@ def apply_kennedy_fusion_with_batched_einsum_extension(
                 prefix=fused_loop_name_prefix_getter(inames_tag),
             ),
         )
+
+    te = time.time()
+    print(f"apply_kennedy_fusion_with_..., loop 2: {te-ts}")
 
     return t_unit.with_kernel(kernel)
 
