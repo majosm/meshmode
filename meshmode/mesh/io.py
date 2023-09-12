@@ -302,9 +302,15 @@ def read_gmsh(
         belong to that volume.
     """
     from gmsh_interop.reader import read_gmsh
+    import time
     recv = GmshMeshReceiver(mesh_construction_kwargs=mesh_construction_kwargs)
+    read_start = time.time()
     read_gmsh(recv, filename, force_dimension=force_ambient_dim)
-
+    read_finish = time.time()
+    retval = recv.get_mesh(return_tag_to_elements_map=return_tag_to_elements_map)
+    get_mesh_finish = time.time()
+    print(f"Read GMSH: {read_finish - read_start}\n"
+          f"MeshData: {get_mesh_finish - read_finish}")
     return recv.get_mesh(return_tag_to_elements_map=return_tag_to_elements_map)
 
 
