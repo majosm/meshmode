@@ -51,9 +51,14 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
         # Use data fields similar to meshpy.triangle.MeshInfo and
         # meshpy.tet.MeshInfo
         self.points = None
+        self.element_nvertices = None
         self.element_vertices = None
+        self.element_nnodes = None
         self.element_nodes = None
         self.element_types = None
+        self.element_type_hist = None
+        self.element_type_index_to_type = None
+        self.element_nmarkers = None
         self.element_markers = None
         self.tags = None
         self.groups = None
@@ -94,7 +99,47 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
             self.element_markers[element_nr] = [physical_tag]
 
     def finalize_elements(self):
-        pass
+        max_vertices = max(len(vertices) for vertices in self.element_vertices)
+        element_nvertices_np = np.empty(len(self.element_vertices), dtype=np.int32)
+        element_vertices_np = np.full(
+            (len(self.element_vertices), max_vertices), -1, dtype=np.int32)
+        for element, vertices in enumerate(self.element_vertices):
+            nvertices = len(vertices)
+            element_nvertices_np[element] = nvertices
+            element_vertices_np[element, :nvertices] = vertices
+        self.element_nvertices = element_nvertices_np
+        self.element_vertices = element_vertices_np
+
+        max_nodes = max(len(nodes) for nodes in self.element_nodes)
+        element_nnodes_np = np.empty(len(self.element_nodes), dtype=np.int32)
+        element_nodes_np = np.full(
+            (len(self.element_nodes), max_nodes), -1, dtype=np.int32)
+        for element, nodes in enumerate(self.element_nodes):
+            nnodes = len(nodes)
+            element_nnodes_np[element] = nnodes
+            element_nodes_np[element, :nnodes] = nodes
+        self.element_nnodes = element_nnodes_np
+        self.element_nodes = element_nodes_np
+
+        self.element_type_hist = {}
+        for el_type in self.element_types:
+            self.element_type_hist[el_type] = self.element_type_hist.get(
+                el_type, 0) + 1
+        self.element_type_index_to_type = list(self.element_type_hist.keys())
+        self.element_types = np.array([
+            self.element_type_index_to_type.index(el_type)
+            for el_type in self.element_types], dtype=np.int32)
+
+        max_markers = max(len(markers) for markers in self.element_markers)
+        element_nmarkers_np = np.empty(len(self.element_markers), dtype=np.int32)
+        element_markers_np = np.full(
+            (len(self.element_markers), max_markers), -1, dtype=np.int32)
+        for element, markers in enumerate(self.element_markers):
+            nmarkers = len(markers)
+            element_nmarkers_np[element] = nmarkers
+            element_markers_np[element, :nmarkers] = markers
+        self.element_nmarkers = element_nmarkers_np
+        self.element_markers = element_markers_np
 
     # May raise ValueError if try to add different tags with the same name
     def add_tag(self, name, index, dimension):
@@ -117,30 +162,31 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
         pass
 
     def get_mesh(self, return_tag_to_elements_map=False):
-        el_type_hist = {}
-        for el_type in self.element_types:
-            el_type_hist[el_type] = el_type_hist.get(el_type, 0) + 1
-
-        if not el_type_hist:
+        if not self.element_type_hist:
             raise RuntimeError("empty mesh in gmsh input")
 
         groups = self.groups = []
         ambient_dim = self.points.shape[-1]
 
-        mesh_bulk_dim = max(el_type.dimensions for el_type in el_type_hist)
+        mesh_bulk_dim = max(el_type.dimensions for el_type in self.element_type_hist)
 
         # {{{ build vertex numbering
 
         # map set of face vertex indices to list of tags associated to face
         face_vertex_indices_to_tags = {}
-        vertex_gmsh_index_to_mine = {}
-        for element, el_vertices in enumerate(self.element_vertices):
+        vertex_gmsh_index_to_mine = np.full(
+            np.max(self.element_vertices)+1, -1, dtype=np.intp)
+        nvertices = 0
+        for element, (el_nvertices, el_vertices) in enumerate(
+                zip(self.element_nvertices, self.element_vertices)):
+            el_vertices = el_vertices[:el_nvertices]
             for gmsh_vertex_nr in el_vertices:
-                if gmsh_vertex_nr not in vertex_gmsh_index_to_mine:
-                    vertex_gmsh_index_to_mine[gmsh_vertex_nr] = \
-                            len(vertex_gmsh_index_to_mine)
+                if vertex_gmsh_index_to_mine[gmsh_vertex_nr] < 0:
+                    vertex_gmsh_index_to_mine[gmsh_vertex_nr] = nvertices
+                    nvertices += 1
             if self.tags:
-                el_markers = self.element_markers[element]
+                el_nmarkers = self.element_nmarkers[element]
+                el_markers = self.element_markers[element, :el_nmarkers]
                 el_tag_indexes = (
                     [self.gmsh_tag_index_to_mine[t] for t in el_markers]
                     if el_markers is not None else [])
@@ -157,12 +203,12 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
 
         # {{{ build vertex array
 
-        gmsh_vertex_indices, my_vertex_indices = \
-                list(zip(*vertex_gmsh_index_to_mine.items()))
-        vertices = np.empty(
-                (ambient_dim, len(vertex_gmsh_index_to_mine)), dtype=np.float64)
-        vertices[:, np.array(my_vertex_indices, np.intp)] = \
-                self.points[np.array(gmsh_vertex_indices, np.intp)].T
+        my_vertex_indices_to_gmsh = np.empty((nvertices,), dtype=np.intp)
+        for gmsh_idx, my_idx in enumerate(vertex_gmsh_index_to_mine):
+            my_vertex_indices_to_gmsh[my_idx] = gmsh_idx
+
+        vertices = self.points[
+            my_vertex_indices_to_gmsh[range(nvertices)]].T
 
         # }}}
 
@@ -175,7 +221,7 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
 
         tag_to_elements = {}
 
-        for group_el_type, ngroup_elements in el_type_hist.items():
+        for group_el_type, ngroup_elements in self.element_type_hist.items():
             if group_el_type.dimensions != mesh_bulk_dim:
                 continue
 
@@ -190,9 +236,16 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
                     np.int32)
             i = 0
 
-            for el_vertices, el_nodes, el_type, el_markers in zip(
-                    self.element_vertices, self.element_nodes, self.element_types,
-                    self.element_markers):
+            for (
+                el_nvertices, el_vertices, el_nnodes, el_nodes, el_type_idx,
+                el_nmarkers, el_markers) in zip(
+                    self.element_nvertices, self.element_vertices,
+                    self.element_nnodes, self.element_nodes, self.element_types,
+                    self.element_nmarkers, self.element_markers):
+                el_vertices = el_vertices[:el_nvertices]
+                el_nodes = el_nodes[:el_nnodes]
+                el_markers = el_markers[:el_nmarkers]
+                el_type = self.element_type_index_to_type[el_type_idx]
                 if el_type is not group_el_type:
                     continue
 
