@@ -303,15 +303,18 @@ def read_gmsh(
     """
     from gmsh_interop.reader import read_gmsh
     import time
+    print(f"Reading gmsh mesh from disk file...")
     recv = GmshMeshReceiver(mesh_construction_kwargs=mesh_construction_kwargs)
     read_start = time.time()
     read_gmsh(recv, filename, force_dimension=force_ambient_dim)
     read_finish = time.time()
+    print(f"Done. Populating meshmode data structures...")
     retval = recv.get_mesh(return_tag_to_elements_map=return_tag_to_elements_map)
     get_mesh_finish = time.time()
+    print(f"Done.")
     print(f"Read GMSH: {read_finish - read_start}\n"
           f"MeshData: {get_mesh_finish - read_finish}")
-    return recv.get_mesh(return_tag_to_elements_map=return_tag_to_elements_map)
+    return retval
 
 
 def generate_gmsh(source, dimensions=None, order=None, other_options=None,
