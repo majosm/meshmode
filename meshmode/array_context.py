@@ -949,12 +949,24 @@ def contract_arrays(knl, callables_table):
             # no one was reading 'temp' i.e. dead code got eliminated :)
             assert f"{temp}_subst" not in knl.substitutions
             continue
-        knl = precompute_for_single_kernel(
-            knl, callables_table, f"{temp}_subst",
-            sweep_inames=(),
-            temporary_address_space=lp.AddressSpace.PRIVATE,
-            compute_insn_id=f"_mm_contract_{temp}",
-        )
+        try:
+            knl = precompute_for_single_kernel(
+                knl, callables_table, f"{temp}_subst",
+                sweep_inames=(),
+                temporary_address_space=lp.AddressSpace.PRIVATE,
+                compute_insn_id=f"_mm_contract_{temp}",
+                _enable_mirgecom_workaround=True,
+            )
+        except TypeError as e:
+            if "_enable_mirgecom_workaround" in str(e):
+                knl = precompute_for_single_kernel(
+                    knl, callables_table, f"{temp}_subst",
+                    sweep_inames=(),
+                    temporary_address_space=lp.AddressSpace.PRIVATE,
+                    compute_insn_id=f"_mm_contract_{temp}",
+                )
+            else:
+                raise
 
         knl = lp.map_instructions(knl,
                                   f"id:_mm_contract_{temp}",
