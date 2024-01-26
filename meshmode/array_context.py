@@ -1376,12 +1376,7 @@ class FusionContractorArrayContext(
                 if not arg3.tags_of_type(pt.tags.ImplStored):
                     arg3 = arg3.tagged(pt.tags.ImplStored())
 
-                return pt.Einsum(expr.access_descriptors,
-                                 (arg1, arg2, arg3),
-                                 expr.redn_axis_to_redn_descr,
-                                 expr.index_to_access_descr,
-                                 axes=expr.axes,
-                                 tags=expr.tags)
+                return expr.copy(args=(arg1, arg2, arg3))
             else:
                 return expr
 
@@ -1495,13 +1490,9 @@ class FusionContractorArrayContext(
                     new_args.append(arg)
                     new_access_descriptors.append(tuple(new_access_descrs))
 
-                return pt.Einsum(tuple(new_access_descriptors),
-                                 tuple(new_args),
-                                 tags=expr.tags,
-                                 axes=expr.axes,
-                                 redn_axis_to_redn_descr=(expr
-                                                          .redn_axis_to_redn_descr),
-                                 index_to_access_descr=expr.index_to_access_descr)
+                return expr.copy(
+                    access_descriptors=tuple(new_access_descriptors),
+                    args=tuple(new_args))
             else:
                 return expr
 
