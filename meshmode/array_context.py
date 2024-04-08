@@ -1419,11 +1419,14 @@ class FusionContractorArrayContext(
             from pytato.raising import (index_lambda_to_high_level_op,
                                         ReduceOp)
 
-            if isinstance(expr, pt.Einsum):
-                return expr.tagged(pt.tags.ImplStored())
-            elif (isinstance(expr, pt.IndexLambda)
-                    and isinstance(index_lambda_to_high_level_op(expr), ReduceOp)):
-                return expr.tagged(pt.tags.ImplStored())
+            if not expr.tags_of_type(pt.tags.ImplStored):
+                if isinstance(expr, pt.Einsum):
+                    return expr.tagged(pt.tags.ImplStored())
+                elif (isinstance(expr, pt.IndexLambda)
+                      and isinstance(index_lambda_to_high_level_op(expr), ReduceOp)):
+                    return expr.tagged(pt.tags.ImplStored())
+                else:
+                    return expr
             else:
                 return expr
 
@@ -1506,6 +1509,7 @@ class FusionContractorArrayContext(
                                          .copy(axes=tuple(
                                              access_descr_to_axes[acc_descr]
                                              for acc_descr in new_access_descrs)))
+                        assert arg_to_freeze is arg or hash(arg_to_freeze) != hash(arg)
 
                         try:
                             new_arg = ensm_arg_rewrite_cache[arg_to_freeze]
@@ -1517,11 +1521,46 @@ class FusionContractorArrayContext(
 
                     assert arg.ndim == len(new_access_descrs)
                     new_args.append(arg)
-                    new_access_descriptors.append(tuple(new_access_descrs))
+                    if (
+                            len(new_access_descrs) == len(access_descrs)
+                            and all(
+                                new_acc_descr is acc_descr
+                                for acc_descr, new_acc_descr in zip(
+                                    access_descrs,
+                                    new_access_descrs))):
+                        new_access_descriptors.append(access_descrs)
+                    else:
+                        new_access_descriptors.append(tuple(new_access_descrs))
 
-                return expr.copy(
-                    access_descriptors=tuple(new_access_descriptors),
-                    args=tuple(new_args))
+                if (
+                        len(new_args) == len(expr.args)
+                        and all(
+                            new_arg is arg
+                            for arg, new_arg in zip(expr.args, new_args))
+                        and (
+                            len(new_access_descriptors)
+                            == len(expr.access_descriptors))
+                        and all(
+                            new_access_descrs is access_descrs
+                            for access_descrs, new_access_descrs in zip(
+                                expr.access_descriptors,
+                                new_access_descriptors))):
+                    new_expr = expr
+                else:
+                    if not (
+                            hash(tuple(new_access_descriptors)) != hash(expr.access_descriptors)
+                            or hash(tuple(new_args)) != hash(expr.args)):
+                        print(f"{all(new_arg is arg for arg, new_arg in zip(expr.args, new_args))=}")
+                        print(f"{all(new_acc_descr is acc_descr for acc_descr, new_acc_descr in zip(expr.access_descriptors, new_access_descriptors))=}")
+                        print(f"{hash(tuple(new_access_descriptors)) != hash(expr.access_descriptors)=}")
+                        print(f"{hash(tuple(new_args)) != hash(expr.args)=}")
+                        raise AssertionError
+                    new_expr = expr.copy(
+                        access_descriptors=tuple(new_access_descriptors),
+                        args=tuple(new_args))
+                    assert hash(new_expr) != hash(expr)
+                assert new_expr is expr or hash(new_expr) != hash(expr)
+                return new_expr
             else:
                 return expr
 
