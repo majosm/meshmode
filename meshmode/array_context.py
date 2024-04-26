@@ -1035,25 +1035,6 @@ def _get_iel_to_idofs(kernel):
     iel_to_idofs = {iel: set() for iel in iel_inames}
 
     for insn in kernel.instructions:
-        # Sanity check
-        for iname in insn.within_inames:
-            if "iel" in iname:
-                if iname not in iel_inames:
-                    print(f"_get_iel_to_idofs: {str(insn)=}")
-                    raise AssertionError("iname not in iel_inames")
-            if "idof" in iname:
-                if iname not in idof_inames:
-                    print(f"_get_iel_to_idofs: {str(insn)=}")
-                    raise AssertionError("iname not in idof_inames")
-            if "iface" in iname:
-                if iname not in iface_inames:
-                    print(f"_get_iel_to_idofs: {str(insn)=}")
-                    raise AssertionError("iname not in iface_inames")
-            if "idim" in iname:
-                if iname not in idim_inames:
-                    print(f"_get_iel_to_idofs: {str(insn)=}")
-                    raise AssertionError("iname not in idim_inames")
-
         if (len(insn.within_inames) == 1
                 and (insn.within_inames) <= iel_inames):
             iel, = insn.within_inames
@@ -1292,22 +1273,22 @@ class FusionContractorArrayContext(
 
         # {{{ CSE
 
-        # with ProcessLogger(logger, "transform_dag.mpms_materialization"):
-        #     dag = pt.transform.materialize_with_mpms(dag)
+        with ProcessLogger(logger, "transform_dag.mpms_materialization"):
+            dag = pt.transform.materialize_with_mpms(dag)
 
-        # def mark_materialized_nodes_as_cse(
-        #             ary: Union[pt.Array,
-        #                         pt.AbstractResultWithNamedArrays]) -> pt.Array:
-        #     if isinstance(ary, pt.AbstractResultWithNamedArrays):
-        #         return ary
+        def mark_materialized_nodes_as_cse(
+                    ary: Union[pt.Array,
+                                pt.AbstractResultWithNamedArrays]) -> pt.Array:
+            if isinstance(ary, pt.AbstractResultWithNamedArrays):
+                return ary
 
-        #     if ary.tags_of_type(pt.tags.ImplStored):
-        #         return ary.tagged(pt.tags.PrefixNamed("cse"))
-        #     else:
-        #         return ary
+            if ary.tags_of_type(pt.tags.ImplStored):
+                return ary.tagged(pt.tags.PrefixNamed("cse"))
+            else:
+                return ary
 
-        # with ProcessLogger(logger, "transform_dag.naming_cse"):
-        #     dag = pt.transform.map_and_copy(dag, mark_materialized_nodes_as_cse)
+        with ProcessLogger(logger, "transform_dag.naming_cse"):
+            dag = pt.transform.map_and_copy(dag, mark_materialized_nodes_as_cse)
 
         # }}}
 
@@ -1360,69 +1341,69 @@ class FusionContractorArrayContext(
 
         # {{{ face_mass: materialize einsum args
 
-        # def materialize_face_mass_input_and_output(expr):
-        #     if (isinstance(expr, pt.Einsum)
-        #             and pt.analysis.is_einsum_similar_to_subscript(
-        #                     expr,
-        #                     "ifj,fej,fej->ei")):
-        #         mat, jac, vec = expr.args
-        #         return (pt.einsum("ifj,fej,fej->ei",
-        #                           mat,
-        #                           jac,
-        #                           vec.tagged(pt.tags.ImplStored()))
-        #                 .tagged((pt.tags.ImplStored(),
-        #                          pt.tags.PrefixNamed("face_mass"))))
-        #     else:
-        #         return expr
+        def materialize_face_mass_input_and_output(expr):
+            if (isinstance(expr, pt.Einsum)
+                    and pt.analysis.is_einsum_similar_to_subscript(
+                            expr,
+                            "ifj,fej,fej->ei")):
+                mat, jac, vec = expr.args
+                return (pt.einsum("ifj,fej,fej->ei",
+                                  mat,
+                                  jac,
+                                  vec.tagged(pt.tags.ImplStored()))
+                        .tagged((pt.tags.ImplStored(),
+                                 pt.tags.PrefixNamed("face_mass"))))
+            else:
+                return expr
 
-        # with ProcessLogger(logger,
-        #                    "transform_dag.materialize_face_mass_ins_and_outs"):
-        #     dag = pt.transform.map_and_copy(dag,
-        #                                     materialize_face_mass_input_and_output)
+        with ProcessLogger(logger,
+                           "transform_dag.materialize_face_mass_ins_and_outs"):
+            dag = pt.transform.map_and_copy(dag,
+                                            materialize_face_mass_input_and_output)
 
         # }}}
 
         # {{{ materialize inverse mass inputs
 
-        # def materialize_inverse_mass_inputs(expr):
-        #     if (isinstance(expr, pt.Einsum)
-        #             and pt.analysis.is_einsum_similar_to_subscript(
-        #                     expr,
-        #                     "ei,ij,ej->ei")):
-        #         arg1, arg2, arg3 = expr.args
-        #         if not arg3.tags_of_type(pt.tags.PrefixNamed):
-        #             arg3 = arg3.tagged(pt.tags.PrefixNamed("mass_inv_inp"))
-        #         if not arg3.tags_of_type(pt.tags.ImplStored):
-        #             arg3 = arg3.tagged(pt.tags.ImplStored())
+        def materialize_inverse_mass_inputs(expr):
+            if (isinstance(expr, pt.Einsum)
+                    and pt.analysis.is_einsum_similar_to_subscript(
+                            expr,
+                            "ei,ij,ej->ei")):
+                arg1, arg2, arg3 = expr.args
+                if not arg3.tags_of_type(pt.tags.PrefixNamed):
+                    arg3 = arg3.tagged(pt.tags.PrefixNamed("mass_inv_inp"))
+                if not arg3.tags_of_type(pt.tags.ImplStored):
+                    arg3 = arg3.tagged(pt.tags.ImplStored())
 
-        #         return expr.copy(args=(arg1, arg2, arg3))
-        #     else:
-        #         return expr
+                return expr.copy(args=(arg1, arg2, arg3))
+            else:
+                return expr
 
-        # dag = pt.transform.map_and_copy(dag, materialize_inverse_mass_inputs)
+        dag = pt.transform.map_and_copy(dag, materialize_inverse_mass_inputs)
 
         # }}}
 
         # {{{ materialize all einsums
 
-        # def materialize_all_einsums_or_reduces(expr):
-        #     from pytato.raising import (index_lambda_to_high_level_op,
-        #                                 ReduceOp)
+        def materialize_all_einsums_or_reduces(expr):
+            from pytato.raising import (index_lambda_to_high_level_op,
+                                        ReduceOp)
 
-        #     if not expr.tags_of_type(pt.tags.ImplStored):
-        #         if isinstance(expr, pt.Einsum):
-        #             return expr.tagged(pt.tags.ImplStored())
-        #         elif (isinstance(expr, pt.IndexLambda)
-        #               and isinstance(index_lambda_to_high_level_op(expr), ReduceOp)):
-        #             return expr.tagged(pt.tags.ImplStored())
-        #         else:
-        #             return expr
-        #     else:
-        #         return expr
+            if not expr.tags_of_type(pt.tags.ImplStored):
+                if isinstance(expr, pt.Einsum):
+                    return expr.tagged(pt.tags.ImplStored())
+                elif (isinstance(expr, pt.IndexLambda)
+                      and isinstance(index_lambda_to_high_level_op(expr), ReduceOp)):
+                    return expr.tagged(pt.tags.ImplStored())
+                else:
+                    return expr
+            else:
+                return expr
 
-        # with ProcessLogger(logger,
-        #                    "transform_dag.materialize_all_einsums_or_reduces"):
-        #     dag = pt.transform.map_and_copy(dag, materialize_all_einsums_or_reduces)
+        with ProcessLogger(logger,
+                           "transform_dag.materialize_all_einsums_or_reduces"):
+            dag = pt.transform.map_and_copy(dag, materialize_all_einsums_or_reduces)
 
         # }}}
 
@@ -1580,97 +1561,97 @@ class FusionContractorArrayContext(
 
         # {{{ attach FEMEinsumTag tags
 
-        # dag_outputs = frozenset(dag._data.values())
+        dag_outputs = frozenset(dag._data.values())
 
-        # def add_fem_einsum_tags(expr):
-        #     if isinstance(expr, pt.Einsum):
-        #         from pytato.array import (EinsumElementwiseAxis,
-        #                                   EinsumReductionAxis)
-        #         assert expr.tags_of_type(pt.tags.ImplStored)
-        #         ensm_indices = []
-        #         for arg, access_descrs in zip(expr.args,
-        #                                       expr.access_descriptors):
-        #             arg_indices = []
-        #             for iaxis, access_descr in enumerate(access_descrs):
-        #                 try:
-        #                     discr_tag = next(
-        #                         iter(arg
-        #                              .axes[iaxis]
-        #                              .tags_of_type(DiscretizationEntityAxisTag)))
-        #                 except StopIteration:
-        #                     raise NotAnFEMEinsumError(expr)
-        #                 else:
-        #                     if isinstance(access_descr, EinsumElementwiseAxis):
-        #                         arg_indices.append(FreeEinsumIndex(discr_tag,
-        #                                                            arg.shape[iaxis]))
-        #                     elif isinstance(access_descr, EinsumReductionAxis):
-        #                         arg_indices.append(SummationEinsumIndex(
-        #                                                   discr_tag,
-        #                                                   arg.shape[iaxis]))
-        #                     else:
-        #                         raise NotImplementedError(access_descr)
-        #             ensm_indices.append(tuple(arg_indices))
+        def add_fem_einsum_tags(expr):
+            if isinstance(expr, pt.Einsum):
+                from pytato.array import (EinsumElementwiseAxis,
+                                          EinsumReductionAxis)
+                assert expr.tags_of_type(pt.tags.ImplStored)
+                ensm_indices = []
+                for arg, access_descrs in zip(expr.args,
+                                              expr.access_descriptors):
+                    arg_indices = []
+                    for iaxis, access_descr in enumerate(access_descrs):
+                        try:
+                            discr_tag = next(
+                                iter(arg
+                                     .axes[iaxis]
+                                     .tags_of_type(DiscretizationEntityAxisTag)))
+                        except StopIteration:
+                            raise NotAnFEMEinsumError(expr)
+                        else:
+                            if isinstance(access_descr, EinsumElementwiseAxis):
+                                arg_indices.append(FreeEinsumIndex(discr_tag,
+                                                                   arg.shape[iaxis]))
+                            elif isinstance(access_descr, EinsumReductionAxis):
+                                arg_indices.append(SummationEinsumIndex(
+                                                          discr_tag,
+                                                          arg.shape[iaxis]))
+                            else:
+                                raise NotImplementedError(access_descr)
+                    ensm_indices.append(tuple(arg_indices))
 
-        #         return expr.tagged(FEMEinsumTag(tuple(ensm_indices)))
-        #     elif (isinstance(expr, pt.Array)
-        #               and (expr.tags_of_type(pt.tags.ImplStored)
-        #                    or expr in dag_outputs)):
-        #         if (isinstance(expr, pt.IndexLambda)
-        #                 and expr.var_to_reduction_descr
-        #                 and expr.shape == ()):
-        #             raise NotImplementedError("all-reduce expressions not"
-        #                                       " supported")
-        #         else:
-        #             discr_tags = []
-        #             for axis in expr.axes:
-        #                 try:
-        #                     discr_tag = next(
-        #                         iter(axis.tags_of_type(DiscretizationEntityAxisTag)))
-        #                 except StopIteration:
-        #                     raise NotAnFEMEinsumError(expr)
-        #                 else:
-        #                     discr_tags.append(discr_tag)
+                return expr.tagged(FEMEinsumTag(tuple(ensm_indices)))
+            elif (isinstance(expr, pt.Array)
+                      and (expr.tags_of_type(pt.tags.ImplStored)
+                           or expr in dag_outputs)):
+                if (isinstance(expr, pt.IndexLambda)
+                        and expr.var_to_reduction_descr
+                        and expr.shape == ()):
+                    raise NotImplementedError("all-reduce expressions not"
+                                              " supported")
+                else:
+                    discr_tags = []
+                    for axis in expr.axes:
+                        try:
+                            discr_tag = next(
+                                iter(axis.tags_of_type(DiscretizationEntityAxisTag)))
+                        except StopIteration:
+                            raise NotAnFEMEinsumError(expr)
+                        else:
+                            discr_tags.append(discr_tag)
 
-        #             fem_ensm_tag = FEMEinsumTag(
-        #                 (tuple(FreeEinsumIndex(discr_tag, dim)
-        #                        for dim, discr_tag in zip(expr.shape,
-        #                                                  discr_tags)),) * 2
-        #             )
+                    fem_ensm_tag = FEMEinsumTag(
+                        (tuple(FreeEinsumIndex(discr_tag, dim)
+                               for dim, discr_tag in zip(expr.shape,
+                                                         discr_tags)),) * 2
+                    )
 
-        #             return expr.tagged(fem_ensm_tag)
+                    return expr.tagged(fem_ensm_tag)
 
-        #     else:
-        #         return expr
+            else:
+                return expr
 
-        # try:
-        #     dag = pt.transform.map_and_copy(dag, add_fem_einsum_tags)
-        # except NotAnFEMEinsumError:
-        #     pass
+        try:
+            dag = pt.transform.map_and_copy(dag, add_fem_einsum_tags)
+        except NotAnFEMEinsumError:
+            pass
 
         # }}}
 
         # {{{ untag outputs tagged from being tagged ImplStored
 
-        # untagged_cache: Dict[ArrayOrNames, ArrayOrNames] = {}
+        untagged_cache: Dict[ArrayOrNames, ArrayOrNames] = {}
 
-        # def _untag_impl_stored(expr):
-        #     try:
-        #         return untagged_cache[expr]
-        #     except KeyError:
-        #         if isinstance(expr, pt.InputArgumentBase):
-        #             untagged_expr = expr
-        #         else:
-        #             if expr.tags_of_type(pt.tags.ImplStored):
-        #                 untagged_expr = expr.without_tags(
-        #                     pt.tags.ImplStored(), verify_existence=False)
-        #             else:
-        #                 untagged_expr = expr
-        #         untagged_cache[expr] = untagged_expr
-        #         return untagged_expr
+        def _untag_impl_stored(expr):
+            try:
+                return untagged_cache[expr]
+            except KeyError:
+                if isinstance(expr, pt.InputArgumentBase):
+                    untagged_expr = expr
+                else:
+                    if expr.tags_of_type(pt.tags.ImplStored):
+                        untagged_expr = expr.without_tags(
+                            pt.tags.ImplStored(), verify_existence=False)
+                    else:
+                        untagged_expr = expr
+                untagged_cache[expr] = untagged_expr
+                return untagged_expr
 
-        # dag = pt.make_dict_of_named_arrays({
-        #         name: _untag_impl_stored(named_ary.expr)
-        #         for name, named_ary in dag.items()})
+        dag = pt.make_dict_of_named_arrays({
+                name: _untag_impl_stored(named_ary.expr)
+                for name, named_ary in dag.items()})
 
         # }}}
 
@@ -1724,8 +1705,8 @@ class FusionContractorArrayContext(
 
         # {{{ loop fusion
 
-        # with ProcessLogger(logger, "Loop Fusion"):
-        #     knl = fuse_same_discretization_entity_loops(knl)
+        with ProcessLogger(logger, "Loop Fusion"):
+            knl = fuse_same_discretization_entity_loops(knl)
 
         # }}}
 
@@ -1738,8 +1719,8 @@ class FusionContractorArrayContext(
 
         # {{{ array contraction
 
-        # with ProcessLogger(logger, "Array Contraction"):
-        #     knl = contract_arrays(knl, t_unit.callables_table)
+        with ProcessLogger(logger, "Array Contraction"):
+            knl = contract_arrays(knl, t_unit.callables_table)
 
         # }}}
 
