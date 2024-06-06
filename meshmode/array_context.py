@@ -1279,6 +1279,10 @@ class FusionContractorArrayContext(
     def transform_dag(self, dag):
         import pytato as pt
 
+        if __debug__:
+            # Check that there aren't any duplicate arrays
+            dag = pt.transform.CopyMapper()(dag)
+
         # {{{ Remove FEMEinsumTags that might have been propagated
 
         # TODO: Is this too hacky?
