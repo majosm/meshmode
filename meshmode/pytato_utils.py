@@ -25,6 +25,7 @@ def _can_be_eagerly_computed(ary) -> bool:
                for inp in InputGatherer()(ary))
 
 
+# FIXME: Needed anymore after precomputable expression evaluation?
 class EagerReduceComputingPytatoFakeNumpyNamespace(PytatoFakeNumpyNamespace):
     """
     A Numpy-namespace that computes the reductions eagerly whenever possible.
