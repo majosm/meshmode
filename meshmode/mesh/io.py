@@ -257,6 +257,7 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
 
         # compute facial adjacency for Mesh if there is tag information
         facial_adjacency_groups = None
+        face_vert_ind_to_tags_local = face_vertex_indices_to_tags.copy()
         if is_conforming and self.tags:
             from meshmode.mesh import _compute_facial_adjacency_from_vertices
             facial_adjacency_groups = _compute_facial_adjacency_from_vertices(
@@ -266,6 +267,7 @@ class GmshMeshReceiver(GmshMeshReceiverBase):
                 vertices, groups,
                 is_conforming=is_conforming,
                 facial_adjacency_groups=facial_adjacency_groups,
+                face_vertex_indices_to_tags=face_vert_ind_to_tags_local,
                 **self.mesh_construction_kwargs)
 
         return (mesh, tag_to_elements) if return_tag_to_elements_map else mesh
@@ -294,10 +296,21 @@ def read_gmsh(
         belong to that volume.
     """
     from gmsh_interop.reader import read_gmsh
+    import time
+    print("Reading gmsh mesh from disk file...")
     recv = GmshMeshReceiver(mesh_construction_kwargs=mesh_construction_kwargs)
-    read_gmsh(recv, filename, force_dimension=force_ambient_dim)
 
-    return recv.get_mesh(return_tag_to_elements_map=return_tag_to_elements_map)
+    read_start = time.time()
+    read_gmsh(recv, filename, force_dimension=force_ambient_dim)
+    read_finish = time.time()
+    print("Done. Populating meshmode data structures...")
+    retval = recv.get_mesh(
+        return_tag_to_elements_map=return_tag_to_elements_map)
+    get_mesh_finish = time.time()
+    print("Done.")
+    print(f"Read GMSH: {read_finish - read_start}\n"
+          f"MeshData: {get_mesh_finish - read_finish}")
+    return retval
 
 
 def generate_gmsh(source, dimensions=None, order=None, other_options=None,
