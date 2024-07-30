@@ -1550,6 +1550,97 @@ def generate_warped_rect_mesh(
 
 # {{{ generate_annular_cylinder_slice_mesh
 
+def generate_annular_cylinder_mesh(
+        n: int, center: np.ndarray, inner_radius: float, outer_radius: float,
+        nelements_per_axis: Optional[int] = None,
+        periodic: bool = False, group_cls=None, dim: int = 3) -> Mesh:
+    r"""
+    Generate a slice of a 3D annular cylinder for
+    :math:`\theta \in [-\frac{\pi}{4}, \frac{\pi}{4}]`. Optionally periodic in
+    $\theta$.
+    """
+    if nelements_per_axis is None:
+        nelements_per_axis = (n,)*dim
+    boundary_tag_to_face = {
+        "-r": ["-x"],
+        "+r": ["+x"],
+        "-theta": ["-y"],
+        "+theta": ["+y"],
+    }
+    if dim == 3:
+        boundary_tag_to_face["-z"] = ["-z"]
+        boundary_tag_to_face["+z"] = ["+z"]
+    if periodic:
+        boundary_tag_to_face["periodic_-theta"] = ["-y"]
+        boundary_tag_to_face["periodic_+theta"] = ["+y"]
+        if dim == 3:
+            boundary_tag_to_face["periodic_-z"] = ["-z"]
+            boundary_tag_to_face["periodic_+z"] = ["+z"]
+
+    unit_mesh = generate_regular_rect_mesh(
+        a=(0,)*dim,
+        b=(1,)*dim,
+        nelements_per_axis=nelements_per_axis,
+        boundary_tag_to_face = boundary_tag_to_face,
+        group_cls=group_cls)
+
+    def transform3(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        r = inner_radius*(1 - x[0]) + outer_radius*x[0]
+        # theta = -np.pi/4*(1 - x[1]) + np.pi/4*x[1]
+        theta = 2*np.pi*x[1]
+        z = -0.5*(1 - x[2]) + 0.5*x[2]
+        return (
+            center[0] + r*np.cos(theta),
+            center[1] + r*np.sin(theta),
+            center[2] + z)
+
+    def transform2(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        r = inner_radius*(1 - x[0]) + outer_radius*x[0]
+        # theta = -np.pi/4*(1 - x[1]) + np.pi/4*x[1]
+        theta = 2*np.pi*x[1]
+        return (
+            center[0] + r*np.cos(theta),
+            center[1] + r*np.sin(theta))
+
+    from meshmode.mesh.processing import map_mesh
+    if dim == 3:
+        mesh = map_mesh(unit_mesh, lambda x: np.stack(transform3(x)))
+    else:
+        mesh = map_mesh(unit_mesh, lambda x: np.stack(transform2(x)))
+
+    if periodic:
+        from meshmode import AffineMap
+        from meshmode.mesh.processing import (
+            BoundaryPairMapping, glue_mesh_boundaries)
+        bdry_pair_mappings_and_tols = []
+        for idim in range(dim):
+            # if periodic[idim]:
+            if idim == 1:
+                offset = np.zeros(dim, dtype=np.float64)
+                # offset[idim] = axis_coords[idim][-1] - axis_coords[idim][0]
+                bdry_pair_mappings_and_tols.append((
+                    BoundaryPairMapping(
+                        "periodic_-theta",  # + axes[idim],
+                        "periodic_+theta",  # + axes[idim],
+                        AffineMap(offset=offset)),
+                    1e-12))
+            if idim == 2:
+                offset = np.zeros(dim, dtype=np.float64)
+                offset[idim] = 1.0
+                bdry_pair_mappings_and_tols.append((
+                    BoundaryPairMapping(
+                        "periodic_-z",  # + axes[idim],
+                        "periodic_+z",  # + axes[idim],
+                        AffineMap(offset=offset)),
+                    1e-12))
+
+        periodic_mesh = glue_mesh_boundaries(mesh, bdry_pair_mappings_and_tols)
+
+        return periodic_mesh
+    else:
+        return mesh
+
+
 def generate_annular_cylinder_slice_mesh(
         n: int, center: np.ndarray, inner_radius: float, outer_radius: float,
         periodic: bool = False) -> Mesh:
