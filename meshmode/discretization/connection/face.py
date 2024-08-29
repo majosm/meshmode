@@ -22,12 +22,17 @@ THE SOFTWARE.
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
 import modepy as mp
+from arraycontext import ArrayContext
 from arraycontext.metadata import NameHint
 
+from meshmode.discretization import Discretization, ElementGroupFactory
+from meshmode.discretization.connection.direct import DirectDiscretizationConnection
+from meshmode.mesh import BoundaryTag, Mesh
 from meshmode.transform_metadata import DiscretizationElementAxisTag
 
 
@@ -116,11 +121,17 @@ def _build_boundary_connection(actx, vol_discr, bdry_discr, connection_data,
 
 # {{{ pull together boundary vertices
 
-def _get_face_vertices(mesh, boundary_tag):
+def _get_face_vertices(mesh: Mesh, boundary_tag: BoundaryTag) -> np.ndarray:
     # a set of volume vertex numbers
     bdry_vertex_vol_nrs = set()
 
-    if boundary_tag not in [FACE_RESTR_INTERIOR, FACE_RESTR_ALL]:
+    if boundary_tag in [FACE_RESTR_INTERIOR, FACE_RESTR_ALL]:
+        # For FACE_RESTR_INTERIOR, this is likely every vertex in the book.
+        # Don't ever bother trying to cut the list down.
+        # For FACE_RESTR_ALL, it literally is every single vertex.
+
+        return np.arange(mesh.nvertices, dtype=np.intp)
+    else:
         # {{{ boundary faces
 
         from meshmode.mesh import mesh_has_boundary
@@ -145,18 +156,17 @@ def _get_face_vertices(mesh, boundary_tag):
         return np.array(sorted(bdry_vertex_vol_nrs), dtype=np.intp)
 
         # }}}
-    else:
-        # For FACE_RESTR_INTERIOR, this is likely every vertex in the book.
-        # Don't ever bother trying to cut the list down.
-        # For FACE_RESTR_ALL, it literally is every single vertex.
-
-        return np.arange(mesh.nvertices, dtype=np.intp)
 
 # }}}
 
 
-def make_face_restriction(actx, discr, group_factory, boundary_tag,
-        per_face_groups=False):
+def make_face_restriction(
+            actx: ArrayContext,
+            discr: Discretization,
+            group_factory: ElementGroupFactory,
+            boundary_tag: BoundaryTag,
+            per_face_groups: Optional[bool] = False
+        ) -> DirectDiscretizationConnection:
     """Create a mesh, a discretization and a connection to restrict
     a function on *discr* to its values on the edges of element faces
     denoted by *boundary_tag*.
@@ -187,15 +197,11 @@ def make_face_restriction(actx, discr, group_factory, boundary_tag,
         :attr:`meshmode.discretization.connection.DirectDiscretizationConnection.to_discr`
         attribute of the return value, and the corresponding new boundary mesh
         from that.
-
     """
 
     if boundary_tag is None:
-        boundary_tag = FACE_RESTR_INTERIOR
-        from warnings import warn
-        warn("passing *None* for boundary_tag is deprecated--pass "
-                "FACE_RESTR_INTERIOR instead",
-                DeprecationWarning, stacklevel=2)
+        raise ValueError("passing *None* for boundary_tag is no longer allowed--pass "
+                "FACE_RESTR_INTERIOR instead")
 
     if boundary_tag not in [FACE_RESTR_INTERIOR, FACE_RESTR_ALL]:
         from meshmode.mesh import mesh_has_boundary
@@ -203,6 +209,8 @@ def make_face_restriction(actx, discr, group_factory, boundary_tag,
             raise ValueError(f"invalid boundary tag {boundary_tag}.")
 
     logger.info("building face restriction: start")
+
+    assert discr.mesh.vertices is not None
 
     # {{{ gather boundary vertices
 
@@ -348,7 +356,10 @@ def make_face_restriction(actx, discr, group_factory, boundary_tag,
                         unit_nodes=bdry_unit_nodes)
                 bdry_mesh_groups.append(bdry_mesh_group)
 
-    bdry_mesh = make_mesh(bdry_vertices, bdry_mesh_groups)
+    bdry_mesh = make_mesh(
+        bdry_vertices, bdry_mesh_groups,
+        # Element orientation test doesn't work if dim != ambient_dim
+        skip_element_orientation_test=True)
 
     bdry_discr = discr.copy(
             actx=actx,
@@ -368,8 +379,12 @@ def make_face_restriction(actx, discr, group_factory, boundary_tag,
 
 # {{{ face -> all_faces connection
 
-def make_face_to_all_faces_embedding(actx, faces_connection, all_faces_discr,
-        from_discr=None):
+def make_face_to_all_faces_embedding(
+            actx: ArrayContext,
+            faces_connection: DirectDiscretizationConnection,
+            all_faces_discr: Discretization,
+            from_discr: Optional[Discretization] = None
+        ) -> DirectDiscretizationConnection:
     """Return a
     :class:`meshmode.discretization.connection.DiscretizationConnection`
     connecting a discretization containing some faces of a discretization

@@ -318,13 +318,6 @@ class PytestPyOpenCLArrayContextFactory(
     actx_class = PyOpenCLArrayContext
 
 
-# deprecated
-class PytestPyOpenCLArrayContextFactoryWithHostScalars(
-        _PytestPyOpenCLArrayContextFactoryWithClass):
-    actx_class = PyOpenCLArrayContext
-    force_device_scalars = False
-
-
 class PytestPytatoPyOpenCLArrayContextFactory(
         _PytestPytatoPyOpenCLArrayContextFactory):
 
@@ -335,8 +328,6 @@ class PytestPytatoPyOpenCLArrayContextFactory(
 
 register_pytest_array_context_factory("meshmode.pyopencl",
         PytestPyOpenCLArrayContextFactory)
-register_pytest_array_context_factory("meshmode.pyopencl-deprecated",
-        PytestPyOpenCLArrayContextFactoryWithHostScalars)
 register_pytest_array_context_factory("meshmode.pytato_cl",
         PytestPytatoPyOpenCLArrayContextFactory)
 

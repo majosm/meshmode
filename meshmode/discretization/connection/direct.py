@@ -460,13 +460,6 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                 for i_tgrp, cgrp in enumerate(self.groups)
                 for i_batch in range(len(cgrp.batches)))
 
-    def full_resample_matrix(self, actx: ArrayContext):
-        from warnings import warn
-        warn("This method is deprecated. Use 'make_direct_full_resample_matrix' "
-                "instead.", DeprecationWarning, stacklevel=2)
-
-        return make_direct_full_resample_matrix(actx, self)
-
     # {{{ _global_point_pick_info_cache
 
     def _per_target_group_pick_info(
@@ -867,7 +860,7 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                 group_array = tag_axes(actx, {
                         0: DiscretizationElementAxisTag(),
                         1: DiscretizationDOFAxisTag()},
-                    actx.zeros(
+                    actx.np.zeros(
                         shape=(self.to_discr.groups[i_tgrp].nelements,
                                self.to_discr.groups[i_tgrp].nunit_dofs),
                         dtype=ary.entry_dtype))
