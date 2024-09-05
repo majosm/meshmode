@@ -144,7 +144,7 @@ def mpi_distribute(
 # TODO: Deprecate?
 class MPIMeshDistributor:
     """
-    .. automethod:: is_mananger_rank
+    .. automethod:: is_manager_rank
     .. automethod:: send_mesh_parts
     .. automethod:: receive_mesh_part
     """
@@ -160,6 +160,13 @@ class MPIMeshDistributor:
              DeprecationWarning, stacklevel=2)
 
     def is_mananger_rank(self):
+        warn(f"'{type(self).__name__}.is_mananger_rank' is deprecated and will "
+             "be removed in 2025 (obvious typo). Use 'is_manager_rank' instead.",
+             DeprecationWarning, stacklevel=2)
+
+        return self.is_manager_rank()
+
+    def is_manager_rank(self):
         return self.mpi_comm.Get_rank() == self.manager_rank
 
     def send_mesh_parts(self, mesh, part_per_element, num_parts):
@@ -175,7 +182,7 @@ class MPIMeshDistributor:
         """
         assert num_parts <= self.mpi_comm.Get_size()
 
-        assert self.is_mananger_rank()
+        assert self.is_manager_rank()
 
         part_num_to_elements = membership_list_to_map(part_per_element)
 
