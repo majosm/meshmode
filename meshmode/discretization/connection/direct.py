@@ -539,7 +539,10 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                     _FromGroupPickData(
                         from_group_index=source_group_index,
                         dof_pick_lists=actx.freeze(
-                            actx.tag_axis(0, DiscretizationDOFPickListAxisTag(),
+                            tag_axes(actx,
+                                {
+                                    0: DiscretizationDOFPickListAxisTag(),
+                                    1: DiscretizationDOFAxisTag()},
                                 actx.tag(NameHint("dof_pick_lists"),
                                     actx.from_numpy(dof_pick_lists)))),
                         dof_pick_list_indices=actx.freeze(
