@@ -174,7 +174,7 @@ class BatchedEinsumPytatoPyOpenCLArrayContext(PytatoPyOpenCLArrayContext):
         # Step 7. Make all pt.einsum/pt.reduction inputs as substitutions
         # ---------------------------------------------------------------
         def implement_einsum_reduction_inputs_as_substs(expr):
-            from immutables import Map
+            from immutabledict import immutabledict
 
             from pytato.target.loopy import ImplSubstitution
             if isinstance(expr, pt.Einsum):
@@ -188,7 +188,6 @@ class BatchedEinsumPytatoPyOpenCLArrayContext(PytatoPyOpenCLArrayContext):
                     tuple(_make_passthrough_arg(arg, ImplSubstitution())
                           for arg in expr.args),
                     expr.redn_axis_to_redn_descr,
-                    expr.index_to_access_descr,
                     tags=expr.tags,
                     axes=expr.axes,
                 )
@@ -198,12 +197,13 @@ class BatchedEinsumPytatoPyOpenCLArrayContext(PytatoPyOpenCLArrayContext):
                 # pylint: disable=too-many-function-args,redundant-keyword-arg
                 # pylint: disable=unexpected-keyword-arg
                 return pt.IndexLambda(
-                    expr.expr,
-                    expr.shape,
-                    expr.dtype,
-                    Map({name: _make_passthrough_arg(bnd, ImplSubstitution())
-                         for name, bnd in expr.bindings.items()}),
-                    expr.var_to_reduction_descr,
+                    expr=expr.expr,
+                    shape=expr.shape,
+                    dtype=expr.dtype,
+                    bindings=immutabledict({
+                        name: _make_passthrough_arg(bnd, ImplSubstitution())
+                        for name, bnd in expr.bindings.items()}),
+                    var_to_reduction_descr=expr.var_to_reduction_descr,
                     tags=expr.tags,
                     axes=expr.axes,
                 )
