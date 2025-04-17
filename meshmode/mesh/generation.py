@@ -1254,6 +1254,9 @@ def generate_box_mesh(
 
     shape_m1 = tuple(max(si-1, 0) for si in shape)
 
+    import time
+    t1 = time.time()
+
     if dim == 1:
         if mesh_type is not None:
             raise ValueError(f"unsupported mesh type: '{mesh_type}'")
@@ -1391,6 +1394,9 @@ def generate_box_mesh(
     else:
         raise NotImplementedError("box meshes of dimension %d" % dim)
 
+    t2 = time.time()
+    print(f"gen_el_vertices: {t2-t1=}")
+
     grp = make_group_from_vertices(
             vertices.reshape(dim, product(vertices.shape[1:])), el_vertices, order,
             group_cls=group_cls, unit_nodes=unit_nodes)
@@ -1405,6 +1411,8 @@ def generate_box_mesh(
             boundary_tag_to_face["periodic_" + upper_face] = [upper_face]
 
     # {{{ compute facial adjacency for mesh if there is tag information
+
+    t1 = time.time()
 
     facial_adjacency_groups = None
     face_vertex_indices_to_tags = {}
@@ -1459,6 +1467,9 @@ def generate_box_mesh(
                             key = frozenset(fvi)
                             face_vertex_indices_to_tags.setdefault(key,
                                                                    []).append(tag)
+
+        t2 = time.time()
+        print(f"gen_face_vertex_indices_to_tags: {t2-t1=}")
 
         from meshmode.mesh import _compute_facial_adjacency_from_vertices
         facial_adjacency_groups = _compute_facial_adjacency_from_vertices(
