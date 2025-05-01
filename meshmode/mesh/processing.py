@@ -165,25 +165,26 @@ def _filter_mesh_groups(
             for igrp, grp in enumerate(mesh.groups)
             if grp.vertex_indices is not None]
 
-    filtered_vertex_indices_flat = np.concatenate([indices.ravel() for indices
-                in filtered_vertex_indices])
+    i_max_vertex = max(
+        (
+            np.max(indices, initial=0)
+            for indices in filtered_vertex_indices),
+        default=0)
 
-    required_vertex_indices, new_vertex_indices_flat = np.unique(
-                filtered_vertex_indices_flat, return_inverse=True)
+    vertex_is_required = np.full((i_max_vertex+1,), False)
+    for indices in filtered_vertex_indices:
+        vertex_is_required[indices] = True
 
-    new_vertex_indices = []
-    start_idx = 0
-    for filtered_indices in filtered_vertex_indices:
-        end_idx = start_idx + filtered_indices.size
-        new_vertex_indices.append(new_vertex_indices_flat[start_idx:end_idx]
-                    .reshape(filtered_indices.shape).astype(vertex_id_dtype))
-        start_idx = end_idx
+    required_vertex_indices, = np.where(vertex_is_required)
+    old_index_to_new_index = np.empty((i_max_vertex+1,))
+    old_index_to_new_index[required_vertex_indices] = \
+        np.arange(len(required_vertex_indices))
 
     # }}}
 
     new_groups = [
             replace(grp,
-                vertex_indices=new_vertex_indices[igrp],
+                vertex_indices=old_index_to_new_index[filtered_vertex_indices[igrp]],
                 nodes=grp.nodes[:, filtered_group_elements[igrp], :].copy())
             for igrp, grp in enumerate(mesh.groups)]
 
@@ -455,36 +456,23 @@ def _create_boundary_groups(
 def _get_mesh_part(
         mesh: Mesh,
         part_id_to_elements: Mapping[PartID, np.ndarray],
-        self_part_id: PartID) -> Mesh:
+        self_part_id: PartID,
+        part_id_to_part_index: Mapping[PartID, int],
+        global_elem_to_part_elem: np.ndarray,
+        part_id_to_connected_parts: Mapping[PartID, Sequence[PartID]]
+        ) -> Mesh:
     """
     :arg mesh: A :class:`~meshmode.mesh.Mesh` to be partitioned.
     :arg part_id_to_elements: A :class:`dict` mapping a part identifier to
         a sorted :class:`numpy.ndarray` of elements.
     :arg self_part_id: The part identifier of the mesh to return.
+    :arg part_id_to_connected_parts: An optional mapping from part identifier to the
+        identifiers of parts that connect to it.
 
     :returns: A :class:`~meshmode.mesh.Mesh` containing a part of *mesh*.
 
     .. versionadded:: 2017.1
     """
-    if mesh.vertices is None:
-        raise ValueError("Mesh must have vertices")
-
-    element_counts = np.zeros(mesh.nelements)
-    for elements in part_id_to_elements.values():
-        element_counts[elements] += 1
-    if np.any(element_counts > 1):
-        raise ValueError("elements cannot belong to multiple parts")
-    if np.any(element_counts < 1):
-        raise ValueError("partition must contain all elements")
-
-    part_id_to_part_index = {
-        part_id: part_index
-        for part_index, part_id in enumerate(part_id_to_elements.keys())}
-
-    global_elem_to_part_elem = _compute_global_elem_to_part_elem(
-        mesh.nelements, part_id_to_elements, part_id_to_part_index,
-        mesh.element_id_dtype)
-
     # Create new mesh groups that mimic the original mesh's groups but only contain
     # the current part's elements
     self_mesh_groups, required_vertex_indices = _filter_mesh_groups(
@@ -501,10 +489,6 @@ def _get_mesh_part(
     for igrp, grp in enumerate(self_mesh_groups):
         self_mesh_group_elem_base[igrp] = el_nr
         el_nr += grp.nelements
-
-    connected_parts = _get_connected_parts(
-        mesh, part_id_to_part_index, global_elem_to_part_elem,
-        self_part_id)
 
     self_to_self_adj_groups = _create_self_to_self_adjacency_groups(
                 mesh, global_elem_to_part_elem, self_part_index, self_mesh_groups,
@@ -554,8 +538,39 @@ def partition_mesh(
     if return_parts is None:
         return_parts = list(part_id_to_elements.keys())
 
+    if mesh.vertices is None:
+        raise ValueError("Mesh must have vertices")
+
+    element_counts = np.zeros(mesh.nelements)
+    for elements in part_id_to_elements.values():
+        element_counts[elements] += 1
+    if np.any(element_counts > 1):
+        raise ValueError("elements cannot belong to multiple parts")
+    if np.any(element_counts < 1):
+        raise ValueError("partition must contain all elements")
+
+    part_id_to_part_index = {
+        part_id: part_index
+        for part_index, part_id in enumerate(part_id_to_elements.keys())}
+
+    global_elem_to_part_elem = _compute_global_elem_to_part_elem(
+        mesh.nelements, part_id_to_elements, part_id_to_part_index,
+        mesh.element_id_dtype)
+
+    part_id_to_connected_parts = {
+        part_id: _get_connected_parts(
+            mesh, part_id_to_part_index, global_elem_to_part_elem,
+            part_id)
+        for part_id in part_id_to_elements}
+
     return {
-        part_id: _get_mesh_part(mesh, part_id_to_elements, part_id)
+        part_id: _get_mesh_part(
+            mesh,
+            part_id_to_elements,
+            part_id,
+            part_id_to_part_index,
+            global_elem_to_part_elem,
+            part_id_to_connected_parts)
         for part_id in return_parts}
 
 # }}}
