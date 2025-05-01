@@ -165,25 +165,27 @@ def _filter_mesh_groups(
             for igrp, grp in enumerate(mesh.groups)
             if grp.vertex_indices is not None]
 
-    filtered_vertex_indices_flat = np.concatenate([indices.ravel() for indices
-                in filtered_vertex_indices])
+    i_max_vertex = max(
+        (
+            np.max(indices, initial=0)
+            for indices in filtered_vertex_indices),
+        default=0)
 
-    required_vertex_indices, new_vertex_indices_flat = np.unique(
-                filtered_vertex_indices_flat, return_inverse=True)
+    vertex_is_required = np.full((i_max_vertex+1,), False)
+    for indices in filtered_vertex_indices:
+        vertex_is_required[indices] = True
 
-    new_vertex_indices = []
-    start_idx = 0
-    for filtered_indices in filtered_vertex_indices:
-        end_idx = start_idx + filtered_indices.size
-        new_vertex_indices.append(new_vertex_indices_flat[start_idx:end_idx]
-                    .reshape(filtered_indices.shape).astype(vertex_id_dtype))
-        start_idx = end_idx
+    required_vertex_indices, = np.where(vertex_is_required)
+    old_index_to_new_index = np.empty((i_max_vertex+1,))
+    old_index_to_new_index[required_vertex_indices] = \
+        np.arange(len(required_vertex_indices))
 
     # }}}
 
     new_groups = [
             replace(grp,
-                vertex_indices=new_vertex_indices[igrp],
+                # FIXME: where is .copy() needed?
+                vertex_indices=old_index_to_new_index[filtered_vertex_indices[igrp]],
                 nodes=grp.nodes[:, filtered_group_elements[igrp], :].copy())
             for igrp, grp in enumerate(mesh.groups)]
 
@@ -194,7 +196,7 @@ def _get_connected_parts(
         mesh: Mesh,
         part_id_to_part_index: Mapping[PartID, int],
         global_elem_to_part_elem: np.ndarray,
-        self_part_id: PartID) -> Sequence[PartID]:
+        self_part_ids: Sequence[PartID]) -> Mapping[PartID, Sequence[PartID]]:
     """
     Find the parts that are connected to the current part.
 
@@ -204,14 +206,14 @@ def _get_connected_parts(
     :arg global_elem_to_part_elem: A :class:`numpy.ndarray` that maps global element
         indices to part indices and part-wide element indices. See
         :func:`_compute_global_elem_to_part_elem`` for details.
-    :arg self_part_id: The identifier of the part currently being created.
+    :arg self_part_ids: Part identifiers for which to find connected parts.
 
-    :returns: A sequence of identifiers of the neighboring parts.
+    :returns: A mapping from part identifier to the identifiers of neighboring parts.
     """
-    self_part_index = part_id_to_part_index[self_part_id]
-
     # This set is not used in a way that will cause nondeterminism.
-    connected_part_indices = set()
+    part_id_to_connected_part_indices = {
+        part_id: set()
+        for part_id in self_part_ids}
 
     for igrp, facial_adj_list in enumerate(mesh.facial_adjacency_groups):
         int_grps = [
@@ -223,51 +225,65 @@ def _get_connected_parts(
             elem_base_i = mesh.base_element_nrs[igrp]
             elem_base_j = mesh.base_element_nrs[jgrp]
 
-            elements_are_self = global_elem_to_part_elem[facial_adj.elements
-                        + elem_base_i, 0] == self_part_index
-            neighbors_are_other = global_elem_to_part_elem[facial_adj.neighbors
-                        + elem_base_j, 0] != self_part_index
+            element_part_indices = global_elem_to_part_elem[
+                facial_adj.elements + elem_base_i, 0]
+            neighbor_part_indices = global_elem_to_part_elem[
+                facial_adj.neighbors + elem_base_j, 0]
 
-            connected_part_indices.update(
-                global_elem_to_part_elem[
-                    facial_adj.neighbors[
-                        elements_are_self & neighbors_are_other]
-                    + elem_base_j, 0])
+            for part_id in self_part_ids:
+                part_index = part_id_to_part_index[part_id]
+                part_id_to_connected_part_indices[part_id].update(
+                    neighbor_part_indices[
+                        (element_part_indices == part_index)
+                        & (neighbor_part_indices != part_index)])
 
-    result = tuple(
-        part_id
-        for part_id, part_index in part_id_to_part_index.items()
-        if part_index in connected_part_indices)
-    assert len(set(result)) == len(result)
+    result = {
+        part_id: tuple(
+            other_part_id
+            for other_part_id, other_part_index in part_id_to_part_index.items()
+            if other_part_index in part_id_to_connected_part_indices[part_id])
+        for part_id in self_part_ids}
+
+    if __debug__:
+        for part_id, connected_parts in result.items():
+            assert len(set(connected_parts)) == len(connected_parts)
+
     return result
 
 
 def _create_self_to_self_adjacency_groups(
         mesh: Mesh,
+        part_id_to_part_index: Mapping[PartID, int],
         global_elem_to_part_elem: np.ndarray,
-        self_part_index: int,
-        self_mesh_groups: Sequence[MeshElementGroup],
-        self_mesh_group_elem_base: Sequence[int]) -> list[list[InteriorAdjacencyGroup]]:
+        part_id_to_mesh_groups: Mapping[PartID, Sequence[MeshElementGroup]],
+        part_id_to_mesh_group_elem_base: Mapping[PartID, Sequence[int]],
+        self_part_ids: Sequence[PartID]
+        ) -> Mapping[PartID, list[list[InteriorAdjacencyGroup]]]:
     r"""
     Create self-to-self facial adjacency groups for a partitioned mesh.
 
     :arg mesh: A :class:`~meshmode.mesh.Mesh` representing the unpartitioned mesh.
+    :arg part_id_to_part_index: A mapping from part identifiers to indices in the
+        range ``[0, num_parts)``.
     :arg global_elem_to_part_elem: A :class:`numpy.ndarray` that maps global element
         indices to part indices and part-wide element indices. See
         :func:`_compute_global_elem_to_part_elem`` for details.
-    :arg self_part_index: The index of the part currently being created, in the
-        range ``[0, num_parts)``.
-    :arg self_mesh_groups: A list of :class:`~meshmode.mesh.MeshElementGroup`
-        instances representing the partitioned mesh groups.
-    :arg self_mesh_group_elem_base: A list containing the starting part-wide
-        element index for each group in *self_mesh_groups*.
+    :arg part_id_to_mesh_groups: A mapping from part identifier to a list of
+        :class:`~meshmode.mesh.MeshElementGroup` instances representing the
+        partitioned mesh groups.
+    :arg part_id_to_mesh_group_elem_base: A mapping from part identifier to a list
+        containing the starting part-wide element index for each group in
+        *self_mesh_groups*.
+    :arg self_part_ids: Part identifiers for which to find connected parts.
 
-    :returns: A list of lists of `~meshmode.mesh.InteriorAdjacencyGroup` instances
-        corresponding to the entries in *mesh.facial_adjacency_groups* that
-        have self-to-self adjacency.
+    :returns: A mapping from part identifier to a list of lists of
+        `~meshmode.mesh.InteriorAdjacencyGroup` instances corresponding to the
+        entries in *mesh.facial_adjacency_groups* that have self-to-self adjacency.
     """
-    self_to_self_adjacency_groups: list[list[InteriorAdjacencyGroup]] = [
-            [] for _ in self_mesh_groups]
+    part_id_to_self_to_self_adjacency_groups: \
+        dict[PartID, list[list[InteriorAdjacencyGroup]]] = {
+            part_id: [[] for _ in part_id_to_mesh_groups[part_id]]
+            for part_id in self_part_ids}
 
     for igrp, facial_adj_list in enumerate(mesh.facial_adjacency_groups):
         int_grps = [
@@ -280,35 +296,38 @@ def _create_self_to_self_adjacency_groups(
             elem_base_i = mesh.base_element_nrs[igrp]
             elem_base_j = mesh.base_element_nrs[jgrp]
 
-            elements_are_self = global_elem_to_part_elem[facial_adj.elements
-                        + elem_base_i, 0] == self_part_index
-            neighbors_are_self = global_elem_to_part_elem[facial_adj.neighbors
-                        + elem_base_j, 0] == self_part_index
+            part_elements = global_elem_to_part_elem[
+                facial_adj.elements + elem_base_i, :]
+            part_neighbors = global_elem_to_part_elem[
+                facial_adj.neighbors + elem_base_j, :]
 
-            adj_indices, = np.where(elements_are_self & neighbors_are_self)
+            for part_id in self_part_ids:
+                part_index = part_id_to_part_index[part_id]
+                adj_indices, = np.where(
+                    (part_elements[:, 0] == part_index)
+                    & (part_neighbors[:, 0] == part_index))
 
-            if len(adj_indices) > 0:
-                self_elem_base_i = self_mesh_group_elem_base[igrp]
-                self_elem_base_j = self_mesh_group_elem_base[jgrp]
+                if len(adj_indices) > 0:
+                    mesh_group_elem_base = part_id_to_mesh_group_elem_base[part_id]
+                    self_elem_base_i = mesh_group_elem_base[igrp]
+                    self_elem_base_j = mesh_group_elem_base[jgrp]
 
-                elements = global_elem_to_part_elem[facial_adj.elements[
-                            adj_indices] + elem_base_i, 1] - self_elem_base_i
-                element_faces = facial_adj.element_faces[adj_indices]
-                neighbors = global_elem_to_part_elem[facial_adj.neighbors[
-                            adj_indices] + elem_base_j, 1] - self_elem_base_j
-                neighbor_faces = facial_adj.neighbor_faces[adj_indices]
+                    elements = part_elements[adj_indices, 1] - self_elem_base_i
+                    element_faces = facial_adj.element_faces[adj_indices]
+                    neighbors = part_neighbors[adj_indices, 1] - self_elem_base_j
+                    neighbor_faces = facial_adj.neighbor_faces[adj_indices]
 
-                self_to_self_adjacency_groups[igrp].append(
-                    InteriorAdjacencyGroup(
-                        igroup=igrp,
-                        ineighbor_group=jgrp,
-                        elements=elements,
-                        element_faces=element_faces,
-                        neighbors=neighbors,
-                        neighbor_faces=neighbor_faces,
-                        aff_map=facial_adj.aff_map))
+                    part_id_to_self_to_self_adjacency_groups[part_id][igrp].append(
+                        InteriorAdjacencyGroup(
+                            igroup=igrp,
+                            ineighbor_group=jgrp,
+                            elements=elements,
+                            element_faces=element_faces,
+                            neighbors=neighbors,
+                            neighbor_faces=neighbor_faces,
+                            aff_map=facial_adj.aff_map))
 
-    return self_to_self_adjacency_groups
+    return part_id_to_self_to_self_adjacency_groups
 
 
 def _create_self_to_other_adjacency_groups(
@@ -455,60 +474,38 @@ def _create_boundary_groups(
 def _get_mesh_part(
         mesh: Mesh,
         part_id_to_elements: Mapping[PartID, np.ndarray],
-        self_part_id: PartID) -> Mesh:
+        self_part_id: PartID,
+        part_id_to_part_index: Mapping[PartID, int],
+        global_elem_to_part_elem: np.ndarray,
+        connected_parts: Sequence[PartID],
+        self_mesh_groups: Sequence[MeshElementGroup],
+        self_mesh_group_elem_base: Sequence[int],
+        required_vertex_indices: np.ndarray,
+        self_to_self_adj_groups: list[list[InteriorAdjacencyGroup]]
+        ) -> Mesh:
     """
     :arg mesh: A :class:`~meshmode.mesh.Mesh` to be partitioned.
     :arg part_id_to_elements: A :class:`dict` mapping a part identifier to
         a sorted :class:`numpy.ndarray` of elements.
     :arg self_part_id: The part identifier of the mesh to return.
+    :arg part_id_to_part_index: A mapping from part identifiers to indices in
+        the range ``[0, num_parts)``.
+    :arg global_elem_to_part_elem: A :class:`numpy.ndarray` that maps global element
+        indices to part indices and part-wide element indices. See
+        :func:`_compute_global_elem_to_part_elem`` for details.
+    :arg self_mesh_groups: TBD.
+    :arg required_vertex_indices: TBD.
+    :arg connected_parts: The identifiers of parts that connect to *self_part_id*.
 
     :returns: A :class:`~meshmode.mesh.Mesh` containing a part of *mesh*.
 
     .. versionadded:: 2017.1
     """
-    if mesh.vertices is None:
-        raise ValueError("Mesh must have vertices")
-
-    element_counts = np.zeros(mesh.nelements)
-    for elements in part_id_to_elements.values():
-        element_counts[elements] += 1
-    if np.any(element_counts > 1):
-        raise ValueError("elements cannot belong to multiple parts")
-    if np.any(element_counts < 1):
-        raise ValueError("partition must contain all elements")
-
-    part_id_to_part_index = {
-        part_id: part_index
-        for part_index, part_id in enumerate(part_id_to_elements.keys())}
-
-    global_elem_to_part_elem = _compute_global_elem_to_part_elem(
-        mesh.nelements, part_id_to_elements, part_id_to_part_index,
-        mesh.element_id_dtype)
-
-    # Create new mesh groups that mimic the original mesh's groups but only contain
-    # the current part's elements
-    self_mesh_groups, required_vertex_indices = _filter_mesh_groups(
-        mesh, part_id_to_elements[self_part_id], mesh.vertex_id_dtype)
-
     self_part_index = part_id_to_part_index[self_part_id]
 
     self_vertices = np.zeros((mesh.ambient_dim, len(required_vertex_indices)))
     for dim in range(mesh.ambient_dim):
         self_vertices[dim] = mesh.vertices[dim][required_vertex_indices]
-
-    self_mesh_group_elem_base = [0 for _ in self_mesh_groups]
-    el_nr = 0
-    for igrp, grp in enumerate(self_mesh_groups):
-        self_mesh_group_elem_base[igrp] = el_nr
-        el_nr += grp.nelements
-
-    connected_parts = _get_connected_parts(
-        mesh, part_id_to_part_index, global_elem_to_part_elem,
-        self_part_id)
-
-    self_to_self_adj_groups = _create_self_to_self_adjacency_groups(
-                mesh, global_elem_to_part_elem, self_part_index, self_mesh_groups,
-                self_mesh_group_elem_base)
 
     self_to_other_adj_groups = _create_self_to_other_adjacency_groups(
                 mesh, part_id_to_part_index, global_elem_to_part_elem, self_part_id,
@@ -554,8 +551,70 @@ def partition_mesh(
     if return_parts is None:
         return_parts = list(part_id_to_elements.keys())
 
+    if mesh.vertices is None:
+        raise ValueError("Mesh must have vertices")
+
+    element_counts = np.zeros(mesh.nelements)
+    for elements in part_id_to_elements.values():
+        element_counts[elements] += 1
+    if np.any(element_counts > 1):
+        raise ValueError("elements cannot belong to multiple parts")
+    if np.any(element_counts < 1):
+        raise ValueError("partition must contain all elements")
+
+    part_id_to_part_index = {
+        part_id: part_index
+        for part_index, part_id in enumerate(part_id_to_elements.keys())}
+
+    global_elem_to_part_elem = _compute_global_elem_to_part_elem(
+        mesh.nelements, part_id_to_elements, part_id_to_part_index,
+        mesh.element_id_dtype)
+
+    part_id_to_connected_parts = _get_connected_parts(
+            mesh, part_id_to_part_index, global_elem_to_part_elem, return_parts)
+
+    # Create new mesh groups that mimic the original mesh's groups but only contain
+    # the current part's elements
+    part_id_to_mesh_groups_and_required_vertex_indices = {
+        part_id: _filter_mesh_groups(
+            mesh, part_id_to_elements[part_id], mesh.vertex_id_dtype)
+        for part_id in return_parts}
+
+    part_id_to_mesh_groups = {
+        part_id: part_id_to_mesh_groups_and_required_vertex_indices[part_id][0]
+        for part_id in return_parts}
+
+    part_id_to_required_vertex_indices = {
+        part_id: part_id_to_mesh_groups_and_required_vertex_indices[part_id][1]
+        for part_id in return_parts}
+
+    part_id_to_mesh_group_elem_base = {}
+    for part_id in return_parts:
+        mesh_groups = part_id_to_mesh_groups[part_id]
+        mesh_group_elem_base = [0 for _ in mesh_groups]
+        el_nr = 0
+        for igrp, grp in enumerate(mesh_groups):
+            mesh_group_elem_base[igrp] = el_nr
+            el_nr += grp.nelements
+        part_id_to_mesh_group_elem_base[part_id] = mesh_group_elem_base
+
+    part_id_to_self_to_self_adj_groups = _create_self_to_self_adjacency_groups(
+        mesh, part_id_to_part_index, global_elem_to_part_elem,
+        part_id_to_mesh_groups, part_id_to_mesh_group_elem_base,
+        return_parts)
+
     return {
-        part_id: _get_mesh_part(mesh, part_id_to_elements, part_id)
+        part_id: _get_mesh_part(
+            mesh,
+            part_id_to_elements,
+            part_id,
+            part_id_to_part_index,
+            global_elem_to_part_elem,
+            part_id_to_connected_parts[part_id],
+            part_id_to_mesh_groups[part_id],
+            part_id_to_mesh_group_elem_base[part_id],
+            part_id_to_required_vertex_indices[part_id],
+            part_id_to_self_to_self_adj_groups[part_id])
         for part_id in return_parts}
 
 # }}}
