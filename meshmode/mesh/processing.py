@@ -143,71 +143,51 @@ def _filter_mesh_groups(
 
     # {{{ find filtered_group_elements
 
-    def part1():
-        group_elem_starts = [
-            np.searchsorted(selected_elements, base_element_nr)
-            for base_element_nr in mesh.base_element_nrs
-            ] + [len(selected_elements)]
+    group_elem_starts = [
+        np.searchsorted(selected_elements, base_element_nr)
+        for base_element_nr in mesh.base_element_nrs
+        ] + [len(selected_elements)]
 
-        filtered_group_elements = []
-        for igrp in range(len(mesh.groups)):
-            start_idx, end_idx = group_elem_starts[igrp:igrp+2]
+    filtered_group_elements = []
+    for igrp in range(len(mesh.groups)):
+        start_idx, end_idx = group_elem_starts[igrp:igrp+2]
 
-            filtered_group_elements.append(
-                selected_elements[start_idx:end_idx] - mesh.base_element_nrs[igrp])
-
-        return group_elem_starts, filtered_group_elements
-
-    group_elem_starts, filtered_group_elements = part1()
+        filtered_group_elements.append(
+            selected_elements[start_idx:end_idx] - mesh.base_element_nrs[igrp])
 
     # }}}
 
     # {{{ filter vertex indices
 
-    def part2():
-        filtered_vertex_indices = [
-                grp.vertex_indices[
-                        filtered_group_elements[igrp], :]
-                for igrp, grp in enumerate(mesh.groups)
-                if grp.vertex_indices is not None]
-        i_max_vertex = max(
-            (
-                np.max(indices, initial=0)
-                for indices in filtered_vertex_indices),
-            default=0)
-        return filtered_vertex_indices, i_max_vertex
+    filtered_vertex_indices = [
+            grp.vertex_indices[
+                    filtered_group_elements[igrp], :]
+            for igrp, grp in enumerate(mesh.groups)
+            if grp.vertex_indices is not None]
 
-    filtered_vertex_indices, i_max_vertex = part2()
+    i_max_vertex = max(
+        (
+            np.max(indices, initial=0)
+            for indices in filtered_vertex_indices),
+        default=0)
 
-    def part3():
-        vertex_is_required = np.full((i_max_vertex+1,), False)
-        for indices in filtered_vertex_indices:
-            vertex_is_required[indices] = True
-        return vertex_is_required
+    vertex_is_required = np.full((i_max_vertex+1,), False)
+    for indices in filtered_vertex_indices:
+        vertex_is_required[indices] = True
 
-    vertex_is_required = part3()
-
-    def part4():
-        required_vertex_indices, = np.where(vertex_is_required)
-        old_index_to_new_index = np.empty((i_max_vertex+1,))
-        old_index_to_new_index[required_vertex_indices] = \
-            np.arange(len(required_vertex_indices))
-        return required_vertex_indices, old_index_to_new_index
-
-    required_vertex_indices, old_index_to_new_index = part4()
+    required_vertex_indices, = np.where(vertex_is_required)
+    old_index_to_new_index = np.empty((i_max_vertex+1,))
+    old_index_to_new_index[required_vertex_indices] = \
+        np.arange(len(required_vertex_indices))
 
     # }}}
 
-    def part5():
-        new_groups = [
-                replace(grp,
-                    # FIXME: where is .copy() needed?
-                    vertex_indices=old_index_to_new_index[filtered_vertex_indices[igrp]],
-                    nodes=grp.nodes[:, filtered_group_elements[igrp], :].copy())
-                for igrp, grp in enumerate(mesh.groups)]
-        return new_groups
-
-    new_groups = part5()
+    new_groups = [
+            replace(grp,
+                # FIXME: where is .copy() needed?
+                vertex_indices=old_index_to_new_index[filtered_vertex_indices[igrp]],
+                nodes=grp.nodes[:, filtered_group_elements[igrp], :].copy())
+            for igrp, grp in enumerate(mesh.groups)]
 
     return new_groups, required_vertex_indices
 
@@ -245,24 +225,17 @@ def _get_connected_parts(
             elem_base_i = mesh.base_element_nrs[igrp]
             elem_base_j = mesh.base_element_nrs[jgrp]
 
-            def part1():
-                element_part_indices = global_elem_to_part_elem[
-                    facial_adj.elements + elem_base_i, 0]
-                neighbor_part_indices = global_elem_to_part_elem[
-                    facial_adj.neighbors + elem_base_j, 0]
-                return element_part_indices, neighbor_part_indices
+            element_part_indices = global_elem_to_part_elem[
+                facial_adj.elements + elem_base_i, 0]
+            neighbor_part_indices = global_elem_to_part_elem[
+                facial_adj.neighbors + elem_base_j, 0]
 
-            element_part_indices, neighbor_part_indices = part1()
-
-            def part2():
-                for part_id in self_part_ids:
-                    part_index = part_id_to_part_index[part_id]
-                    part_id_to_connected_part_indices[part_id].update(
-                        neighbor_part_indices[
-                            (element_part_indices == part_index)
-                            & (neighbor_part_indices != part_index)])
-
-            part2()
+            for part_id in self_part_ids:
+                part_index = part_id_to_part_index[part_id]
+                part_id_to_connected_part_indices[part_id].update(
+                    neighbor_part_indices[
+                        (element_part_indices == part_index)
+                        & (neighbor_part_indices != part_index)])
 
     result = {
         part_id: tuple(
@@ -323,52 +296,36 @@ def _create_self_to_self_adjacency_groups(
             elem_base_i = mesh.base_element_nrs[igrp]
             elem_base_j = mesh.base_element_nrs[jgrp]
 
-            def part1():
-                part_elements = global_elem_to_part_elem[
-                    facial_adj.elements + elem_base_i, :]
-                part_neighbors = global_elem_to_part_elem[
-                    facial_adj.neighbors + elem_base_j, :]
-                return part_elements, part_neighbors
-
-            part_elements, part_neighbors = part1()
+            part_elements = global_elem_to_part_elem[
+                facial_adj.elements + elem_base_i, :]
+            part_neighbors = global_elem_to_part_elem[
+                facial_adj.neighbors + elem_base_j, :]
 
             for part_id in self_part_ids:
                 part_index = part_id_to_part_index[part_id]
-
-                def part2():
-                    adj_indices, = np.where(
-                        (part_elements[:, 0] == part_index)
-                        & (part_neighbors[:, 0] == part_index))
-                    return adj_indices
-
-                adj_indices = part2()
+                adj_indices, = np.where(
+                    (part_elements[:, 0] == part_index)
+                    & (part_neighbors[:, 0] == part_index))
 
                 if len(adj_indices) > 0:
                     mesh_group_elem_base = part_id_to_mesh_group_elem_base[part_id]
                     self_elem_base_i = mesh_group_elem_base[igrp]
                     self_elem_base_j = mesh_group_elem_base[jgrp]
 
-                    def part3():
-                        elements = part_elements[adj_indices, 1] - self_elem_base_i
-                        element_faces = facial_adj.element_faces[adj_indices]
-                        neighbors = part_neighbors[adj_indices, 1] - self_elem_base_j
-                        neighbor_faces = facial_adj.neighbor_faces[adj_indices]
-                        return elements, element_faces, neighbors, neighbor_faces
+                    elements = part_elements[adj_indices, 1] - self_elem_base_i
+                    element_faces = facial_adj.element_faces[adj_indices]
+                    neighbors = part_neighbors[adj_indices, 1] - self_elem_base_j
+                    neighbor_faces = facial_adj.neighbor_faces[adj_indices]
 
-                    elements, element_faces, neighbors, neighbor_faces = part3()
-
-                    def part4():
-                        part_id_to_self_to_self_adjacency_groups[part_id][igrp].append(
-                            InteriorAdjacencyGroup(
-                                igroup=igrp,
-                                ineighbor_group=jgrp,
-                                elements=elements,
-                                element_faces=element_faces,
-                                neighbors=neighbors,
-                                neighbor_faces=neighbor_faces,
-                                aff_map=facial_adj.aff_map))
-
-                    part4()
+                    part_id_to_self_to_self_adjacency_groups[part_id][igrp].append(
+                        InteriorAdjacencyGroup(
+                            igroup=igrp,
+                            ineighbor_group=jgrp,
+                            elements=elements,
+                            element_faces=element_faces,
+                            neighbors=neighbors,
+                            neighbor_faces=neighbor_faces,
+                            aff_map=facial_adj.aff_map))
 
     return part_id_to_self_to_self_adjacency_groups
 
