@@ -301,11 +301,33 @@ def _create_self_to_self_adjacency_groups(
             part_neighbors = global_elem_to_part_elem[
                 facial_adj.neighbors + elem_base_j, :]
 
+            element_part_order = np.argsort(part_elements[:, 0])
+
+            element_part_intervals = np.searchsorted(
+                part_elements[:, 0],
+                [
+                    i
+                    for part_id in self_part_ids
+                    for i in (
+                        part_id_to_part_index[part_id],
+                        part_id_to_part_index[part_id] + 1)],
+                sorter=element_part_order).reshape(len(self_part_ids), 2)
+
+#             from mpi4py import MPI
+#             if MPI.COMM_WORLD.rank == 0:
+#                 print(f"{element_part_intervals=}")
+
+            part_id_to_element_src_indices = {
+                part_id: element_part_order[
+                    element_part_intervals[ipart, 0]
+                    :element_part_intervals[ipart, 1]]
+                for ipart, part_id in enumerate(self_part_ids)}
+
             for part_id in self_part_ids:
                 part_index = part_id_to_part_index[part_id]
+                element_src_indices = part_id_to_element_src_indices[part_id]
                 adj_indices, = np.where(
-                    (part_elements[:, 0] == part_index)
-                    & (part_neighbors[:, 0] == part_index))
+                    part_neighbors[element_src_indices, 0] == part_index)
 
                 if len(adj_indices) > 0:
                     mesh_group_elem_base = part_id_to_mesh_group_elem_base[part_id]
