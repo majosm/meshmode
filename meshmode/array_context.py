@@ -1544,9 +1544,18 @@ class FusionContractorArrayContext(
 
                     assert arg.ndim == len(new_access_descrs)
                     new_args.append(arg)
-                    new_access_descriptors.append(tuple(new_access_descrs))
+                    if (
+                            len(new_access_descrs) == len(access_descrs)
+                            and all(
+                                new_acc_descr is acc_descr
+                                for acc_descr, new_acc_descr in zip(
+                                    access_descrs,
+                                    new_access_descrs, strict=True))):
+                        new_access_descriptors.append(access_descrs)
+                    else:
+                        new_access_descriptors.append(tuple(new_access_descrs))
 
-                return expr.copy(
+                return expr.replace_if_different(
                     access_descriptors=tuple(new_access_descriptors),
                     args=tuple(new_args))
             else:
