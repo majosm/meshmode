@@ -22,7 +22,7 @@ def _can_be_eagerly_computed(ary) -> bool:
     from pytato.transform import InputGatherer
     from pytato.array import Placeholder
     return all(not isinstance(inp, Placeholder)
-               for inp in InputGatherer()(ary))
+               for inp in InputGatherer(err_on_collision=False)(ary))
 
 
 class EagerReduceComputingPytatoFakeNumpyNamespace(PytatoFakeNumpyNamespace):
