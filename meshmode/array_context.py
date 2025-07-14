@@ -1658,12 +1658,21 @@ class FusionContractorArrayContext(
 
         # {{{ untag outputs tagged from being tagged ImplStored
 
+        # May have multiple outputs that are the same array, so cache to avoid
+        # duplicating
+        untagged_cache: Dict[ArrayOrNames, ArrayOrNames] = {}
+
         def _untag_impl_stored(expr):
-            if isinstance(expr, pt.InputArgumentBase):
-                return expr
-            else:
-                return expr.without_tags(pt.tags.ImplStored(),
-                                         verify_existence=False)
+            try:
+                return untagged_cache[expr]
+            except KeyError:
+                if isinstance(expr, pt.InputArgumentBase):
+                    untagged_expr = expr
+                else:
+                    untagged_expr = expr.without_tags(
+                        pt.tags.ImplStored(), verify_existence=False)
+                untagged_cache[expr] = untagged_expr
+                return untagged_expr
 
         dag = pt.make_dict_of_named_arrays({
                 name: _untag_impl_stored(named_ary.expr)
