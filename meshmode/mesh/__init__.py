@@ -1,5 +1,3 @@
-# mypy: disallow-untyped-defs
-
 from __future__ import annotations
 
 
@@ -2001,7 +1999,7 @@ def _boundary_tag_as_python(boundary_tag: BoundaryTag) -> str:
     elif isinstance(boundary_tag, str):
         return boundary_tag
     else:
-        return boundary_tag.as_python()  # type: ignore[attr-defined]
+        return boundary_tag.as_python()
 
 
 def _numpy_array_as_python(array: np.ndarray | None) -> str:

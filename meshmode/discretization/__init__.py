@@ -27,7 +27,7 @@ THE SOFTWARE.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from warnings import warn
 
 import numpy as np
@@ -35,9 +35,9 @@ from typing_extensions import override
 
 import loopy as lp
 import modepy as mp
-from arraycontext import ArrayContext, make_loopy_program, tag_axes
+import pytools.obj_array as obj_array
+from arraycontext import Array, ArrayContext, make_loopy_program, tag_axes
 from pytools import keyed_memoize_in, memoize_in, memoize_method
-from pytools.obj_array import ObjectArray, make_obj_array
 
 # underscored because it shouldn't be imported from here.
 from meshmode.dof_array import DOFArray as _DOFArray
@@ -51,11 +51,14 @@ from meshmode.transform_metadata import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Hashable, Iterable, Sequence
+    from collections.abc import Callable, Hashable, Iterable, Sequence
 
     from numpy.typing import DTypeLike
 
-    from meshmode.mesh import Mesh as _Mesh, MeshElementGroup as _MeshElementGroup
+    from modepy.typing import ArrayF
+    from pytools.obj_array import ObjectArray
+
+    from meshmode.mesh import Mesh, MeshElementGroup
 
 
 __doc__ = """
@@ -122,11 +125,11 @@ class ElementGroupBase(ABC):
     .. automethod:: discretization_key
     """
 
-    mesh_el_group: _MeshElementGroup
+    mesh_el_group: MeshElementGroup
     order: int
 
     def __init__(self,
-                 mesh_el_group: _MeshElementGroup,
+                 mesh_el_group: MeshElementGroup,
                  order: int,
                  ) -> None:
         self.mesh_el_group = mesh_el_group
@@ -205,10 +208,11 @@ class ElementGroupFactory(Protocol):
     .. automethod:: __call__
     """
 
-    def __call__(self, mesh_el_group: _MeshElementGroup) -> ElementGroupBase:
+    def __call__(self, mesh_el_group: MeshElementGroup, /) -> ElementGroupBase:
         """Create a new :class:`~meshmode.discretization.ElementGroupBase`
         for the given *mesh_el_group*.
         """
+        raise NotImplementedError()
 
 # }}}
 
@@ -240,7 +244,7 @@ class NodalElementGroupBase(ElementGroupBase, ABC):
 
     @property
     @memoize_method
-    def unit_nodes(self) -> np.ndarray:
+    def unit_nodes(self) -> ArrayF:
         """Returns a :class:`numpy.ndarray` of shape ``(dim, nunit_dofs)``
         of reference coordinates of interpolation nodes.
 
@@ -262,6 +266,10 @@ class NodalElementGroupBase(ElementGroupBase, ABC):
         element group. This quadrature rule shares the nodes
         returned by :meth:`unit_nodes`.
         """
+
+    @abstractmethod
+    def from_mesh_interp_matrix(self) -> ArrayF:
+        pass
 
 # }}}
 
@@ -286,7 +294,7 @@ class ElementGroupWithBasis(ElementGroupBase, ABC):
         """
 
     @memoize_method
-    def is_orthonormal_basis(self):
+    def is_orthonormal_basis(self) -> bool:
         """Returns a :class:`bool` flag that is *True* if the
         basis corresponding to the element group is orthonormal
         with respect to the :math:`L^2` inner-product.
@@ -368,16 +376,18 @@ class Discretization:
     .. automethod:: quad_weights
     """
 
-    mesh: _Mesh
+    mesh: Mesh
     groups: Sequence[ElementGroupBase]
     real_dtype: np.dtype[np.floating]
     complex_dtype: np.dtype[np.complexfloating]
 
     _setup_actx: ArrayContext
+    _group_factory: ElementGroupFactory
+    _cached_nodes: ObjectArray[tuple[int], _DOFArray] | None
 
     def __init__(self,
                  actx: ArrayContext,
-                 mesh: _Mesh,
+                 mesh: Mesh,
                  group_factory: ElementGroupFactory,
                  real_dtype: DTypeLike = None,
                  _force_actx_clone: bool = True) -> None:
@@ -394,7 +404,7 @@ class Discretization:
             real_dtype = np.float64
 
         if not isinstance(actx, ArrayContext):
-            raise TypeError("'actx' must be an ArrayContext")
+            raise TypeError(f"'actx' must be an ArrayContext: {type(actx)}")
 
         self.mesh = mesh
         self.groups = [group_factory(mg) for mg in mesh.groups]
@@ -424,11 +434,14 @@ class Discretization:
 
     def copy(self,
              actx: ArrayContext | None = None,
-             mesh: _Mesh | None = None,
+             mesh: Mesh | None = None,
              group_factory: ElementGroupFactory | None = None,
              real_dtype: np.dtype | None = None) -> Discretization:
-        """Creates a new object of the same type with all arguments that are not
-        *None* replaced. The copy is not recursive.
+        """Creates a copy of the current discretization with the new arguments.
+
+        This is not a deep copy, so the underlying array context, mesh, element
+        groups, etc., will remain as shared objects between the old and new
+        discretization.
         """
 
         return type(self)(
@@ -440,20 +453,20 @@ class Discretization:
                 )
 
     @property
-    def dim(self):
+    def dim(self) -> int:
         return self.mesh.dim
 
     @property
-    def ambient_dim(self):
+    def ambient_dim(self) -> int:
         return self.mesh.ambient_dim
 
     @property
-    def ndofs(self):
+    def ndofs(self) -> int:
         return sum(grp.ndofs for grp in self.groups)
 
     @property
     @memoize_method
-    def is_nodal(self):
+    def is_nodal(self) -> bool:
         """A :class:`bool` indicating whether the :class:`Discretization`
         is defined over element groups subclasses of :class:`NodalElementGroupBase`.
         """
@@ -462,7 +475,7 @@ class Discretization:
 
     @property
     @memoize_method
-    def is_modal(self):
+    def is_modal(self) -> bool:
         """A :class:`bool` indicating whether the :class:`Discretization`
         is defined over element groups subclasses of :class:`ModalElementGroupBase`.
         """
@@ -471,7 +484,7 @@ class Discretization:
 
     def _new_array(self,
                 actx: ArrayContext,
-                creation_func,
+                creation_func: Callable[[tuple[int, int], np.dtype[Any]], Array],
                 dtype: DTypeLike = None
             ):
         if dtype is None:
@@ -481,17 +494,16 @@ class Discretization:
         else:
             dtype = np.dtype(dtype)
 
+        result = _DOFArray(actx, tuple(
+            creation_func((grp.nelements, grp.nunit_dofs), dtype)
+            for grp in self.groups)
+            )
         return tag_axes(actx, {
                     0: DiscretizationElementAxisTag(),
-                    1: DiscretizationDOFAxisTag()},
-                _DOFArray(actx,
-                           tuple(creation_func(shape=(grp.nelements,
-                                                      grp.nunit_dofs),
-                                               dtype=dtype)
-                                 for grp in self.groups)))
+                    1: DiscretizationDOFAxisTag()
+                }, result)
 
-    def empty(self, actx: ArrayContext,
-              dtype: np.dtype | None = None) -> _DOFArray:
+    def empty(self, actx: ArrayContext, dtype: DTypeLike = None) -> _DOFArray:
         """Return an empty :class:`~meshmode.dof_array.DOFArray`.
 
         :arg dtype: type special value 'c' will result in a
@@ -499,8 +511,7 @@ class Discretization:
             *None* (the default), a real vector will be returned.
         """
         if not isinstance(actx, ArrayContext):
-            raise TypeError(
-                f"'actx' must be an ArrayContext, not '{type(actx).__name__}'")
+            raise TypeError(f"'actx' must be an ArrayContext: {type(actx)}")
 
         warn(f"'{type(self).__name__}.empty' is deprecated and will be removed "
              f"in 2025. Use '{type(self).__name__}.zeros' instead.",
@@ -509,8 +520,7 @@ class Discretization:
         # return self._new_array(actx, actx.np.zeros, dtype=dtype)
         return self._new_array(actx, actx.zeros, dtype=dtype)
 
-    def zeros(self, actx: ArrayContext,
-              dtype: np.dtype | None = None) -> _DOFArray:
+    def zeros(self, actx: ArrayContext, dtype: DTypeLike = None) -> _DOFArray:
         """Return a zero-initialized :class:`~meshmode.dof_array.DOFArray`.
 
         :arg dtype: type special value 'c' will result in a
@@ -518,8 +528,7 @@ class Discretization:
             *None* (the default), a real vector will be returned.
         """
         if not isinstance(actx, ArrayContext):
-            raise TypeError(
-                f"'actx' must be an ArrayContext, not '{type(actx).__name__}'")
+            raise TypeError(f"'actx' must be an ArrayContext: {type(actx)}")
 
         # return self._new_array(actx, actx.np.zeros, dtype=dtype)
         return self._new_array(actx, actx.zeros, dtype=dtype)
@@ -530,11 +539,18 @@ class Discretization:
              DeprecationWarning, stacklevel=2)
 
         actx = array.array_context
+        if actx is None:
+            raise ValueError("input array is frozen (actx is None)")
+
         # return self._new_array(actx, actx.np.zeros, dtype=array.entry_dtype)
         return self._new_array(actx, actx.zeros, dtype=array.entry_dtype)
 
     def zeros_like(self, array: _DOFArray) -> _DOFArray:
-        return self.zeros(array.array_context, dtype=array.entry_dtype)
+        actx = array.array_context
+        if actx is None:
+            raise ValueError("input array is frozen (actx is None)")
+
+        return self.zeros(actx, dtype=array.entry_dtype)
 
     @memoize_method
     def quad_weights(self) -> _DOFArray:
@@ -544,10 +560,10 @@ class Discretization:
         actx = self._setup_actx
 
         if not self.is_nodal:
-            raise ElementGroupTypeError("Element groups must be nodal.")
+            raise ElementGroupTypeError("element groups must be nodal")
 
         @memoize_in(actx, (Discretization, "quad_weights_prg"))
-        def prg():
+        def prg() -> lp.TranslationUnit:
             t_unit = make_loopy_program(
                 "{[iel,idof]: 0<=iel<nelements and 0<=idof<nunit_dofs}",
                 "result[iel,idof] = weights[idof]",
@@ -587,7 +603,9 @@ class Discretization:
         if not self.is_nodal:
             raise ElementGroupTypeError("Element groups must be nodal.")
 
-        def resample_mesh_nodes(grp: NodalElementGroupBase, iaxis: int):
+        def resample_mesh_nodes(grp: ElementGroupBase, iaxis: int) -> Array:
+            assert isinstance(grp, NodalElementGroupBase)
+
             name_hint = f"nodes{iaxis}_{self.ambient_dim}d"
             # TODO: would be nice to have the mesh use an array context already
             nodes = tag_axes(actx,
@@ -615,7 +633,7 @@ class Discretization:
                                    FirstAxisIsElementsTag(),
                                    NameHint(name_hint)))
 
-        result = make_obj_array([
+        result = obj_array.new_1d([
             _DOFArray(None, tuple(actx.freeze(resample_mesh_nodes(grp, iaxis))
                       for grp in self.groups))
             for iaxis in range(self.ambient_dim)])
@@ -644,8 +662,10 @@ def num_reference_derivative(
     if not ref_axes:
         return vec
 
-    actx = vec.array_context
     ref_axes = tuple(sorted(ref_axes))
+    actx = vec.array_context
+    if actx is None:
+        raise ValueError("cannot compute reference derivative on frozen array 'vec'")
 
     if not all(0 <= ref_axis < discr.dim for ref_axis in ref_axes):
         raise ValueError("'ref_axes' exceeds discretization dimensions: "
@@ -654,7 +674,7 @@ def num_reference_derivative(
     @keyed_memoize_in(actx,
             (num_reference_derivative, "num_reference_derivative_matrix"),
             lambda grp, gref_axes: (*grp.discretization_key(), *gref_axes))
-    def get_mat(grp: ElementGroupBase, gref_axes: Sequence[int]):
+    def get_mat(grp: ElementGroupBase, gref_axes: Sequence[int]) -> Array:
         if not isinstance(grp, InterpolatoryElementGroupBase):
             raise ValueError("element groups must be interpolatory "
                              "to allow taking derivatives")
