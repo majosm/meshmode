@@ -99,6 +99,15 @@ class DiscretizationDOFAxisTag(DiscretizationEntityAxisTag):
     """
     discr_key: Hashable | None = None
 
+    def __post_init__(self):
+        if self.discr_key is None:
+            from warnings import warn
+            warn(
+                "Creating a DiscretizationDOFAxisTag without a discr_key value is "
+                "deprecated and will become an error in Q1 2026. Pass the "
+                "corresponding discretization group's 'discretization_key()' value "
+                "to make this warning go away.", DeprecationWarning, stacklevel=2)
+
 
 @tag_dataclass
 class DiscretizationFlattenedDOFAxisTag(DiscretizationEntityAxisTag):
