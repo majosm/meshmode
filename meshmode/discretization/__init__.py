@@ -482,6 +482,17 @@ class Discretization:
         return all(isinstance(grp, ModalElementGroupBase)
                    for grp in self.groups)
 
+    def tag_dof_array_axes(self, actx: ArrayContext, array: _DOFArray):
+        return _DOFArray(
+            actx,
+            data=tuple(
+                tag_axes(
+                    actx, {
+                        0: DiscretizationElementAxisTag(),
+                        1: DiscretizationDOFAxisTag(grp.discretization_key())},
+                    grp_ary)
+                for grp, grp_ary in zip(self.groups, array, strict=True)))
+
     def _new_array(self,
                 actx: ArrayContext,
                 creation_func: Callable[[tuple[int, int], np.dtype[Any]], Array],
@@ -498,10 +509,7 @@ class Discretization:
             creation_func((grp.nelements, grp.nunit_dofs), dtype)
             for grp in self.groups)
             )
-        return tag_axes(actx, {
-                    0: DiscretizationElementAxisTag(),
-                    1: DiscretizationDOFAxisTag()
-                }, result)
+        return self.tag_dof_array_axes(actx, result)
 
     def empty(self, actx: ArrayContext, dtype: DTypeLike = None) -> _DOFArray:
         """Return an empty :class:`~meshmode.dof_array.DOFArray`.
@@ -610,7 +618,7 @@ class Discretization:
             # TODO: would be nice to have the mesh use an array context already
             nodes = tag_axes(actx,
                     {0: DiscretizationElementAxisTag(),
-                        1: DiscretizationDOFAxisTag()},
+                        1: DiscretizationDOFAxisTag(grp.discretization_key())},
                     actx.from_numpy(grp.mesh_el_group.nodes[iaxis]))
 
             grp_unit_nodes = grp.unit_nodes.reshape(-1)
@@ -626,7 +634,7 @@ class Discretization:
             return actx.einsum("ij,ej->ei",
                                actx.tag_axis(
                                    0,
-                                   DiscretizationDOFAxisTag(),
+                                   DiscretizationDOFAxisTag(grp.discretization_key()),
                                    actx.from_numpy(grp.from_mesh_interp_matrix())),
                                nodes,
                                tagged=(
@@ -695,8 +703,8 @@ def num_reference_derivative(
     return _DOFArray(actx, tuple(
             actx.einsum("ij,ej->ei",
                         actx.tag_axis(0,
-                                      DiscretizationDOFAxisTag(),
-                                      get_mat(grp, ref_axes)),
+                                  DiscretizationDOFAxisTag(grp.discretization_key()),
+                                  get_mat(grp, ref_axes)),
                         vec[igrp],
                         tagged=(FirstAxisIsElementsTag(),))
             for igrp, grp in enumerate(discr.groups)))

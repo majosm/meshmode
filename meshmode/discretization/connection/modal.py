@@ -150,8 +150,8 @@ class NodalToModalDiscretizationConnection(DiscretizationConnection):
             w_diag = np.diag(grp.quadrature_rule().weights)
             vtw = np.dot(vdm.T, w_diag)
             return tag_axes(actx, {
-                    0: DiscretizationDOFAxisTag(),
-                    1: DiscretizationDOFAxisTag()},
+                    0: DiscretizationDOFAxisTag(mgrp.discretization_key()),
+                    1: DiscretizationDOFAxisTag(grp.discretization_key())},
                 actx.from_numpy(vtw))
 
         return actx.einsum("ib,eb->ei",
@@ -170,8 +170,8 @@ class NodalToModalDiscretizationConnection(DiscretizationConnection):
                                  grp.unit_nodes)
             vdm_inv = la.inv(vdm)
             return tag_axes(actx, {
-                    0: DiscretizationDOFAxisTag(),
-                    1: DiscretizationDOFAxisTag()},
+                    0: DiscretizationDOFAxisTag(grp.discretization_key()),
+                    1: DiscretizationDOFAxisTag(grp.discretization_key())},
                 actx.from_numpy(vdm_inv))
 
         return actx.einsum("ij,ej->ei",
@@ -351,8 +351,8 @@ class ModalToNodalDiscretizationConnection(DiscretizationConnection):
             vdm = mp.vandermonde(from_grp.basis_obj().functions,
                                  to_grp.unit_nodes)
             return tag_axes(actx, {
-                    0: DiscretizationDOFAxisTag(),
-                    1: DiscretizationDOFAxisTag()},
+                    0: DiscretizationDOFAxisTag(to_grp.discretization_key()),
+                    1: DiscretizationDOFAxisTag(from_grp.discretization_key())},
                 actx.from_numpy(vdm))
 
         result_data = tuple(

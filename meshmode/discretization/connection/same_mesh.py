@@ -43,7 +43,8 @@ if TYPE_CHECKING:
 def make_same_mesh_connection(
             actx: ArrayContext,
             to_discr: Discretization,
-            from_discr: Discretization,
+            from_discr: Discretization, *,
+            tag_out_dof_axes: bool = True,
         ):
     from meshmode.discretization.connection.direct import (
         DirectDiscretizationConnection,
@@ -84,7 +85,8 @@ def make_same_mesh_connection(
 
     return DirectDiscretizationConnection(
             from_discr, to_discr, groups,
-            is_surjective=True)
+            is_surjective=True,
+            tag_out_dof_axes=tag_out_dof_axes)
 
 # }}}
 

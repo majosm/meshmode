@@ -375,10 +375,12 @@ class DirectDiscretizationConnection(DiscretizationConnection):
     def __init__(self,
             from_discr: Discretization, to_discr: Discretization,
             groups: Sequence[DiscretizationConnectionElementGroup],
-            is_surjective: bool) -> None:
+            is_surjective: bool, *,
+            tag_out_dof_axes: bool = True) -> None:
         super().__init__(from_discr, to_discr, is_surjective)
 
         self.groups = groups
+        self.tag_out_dof_axes = tag_out_dof_axes
         self._global_point_pick_info_cache = None
 
     # {{{ _resample_matrix
@@ -414,7 +416,9 @@ class DirectDiscretizationConnection(DiscretizationConnection):
 
         # freeze, attach metadata
         return actx.freeze(
-                tag_axes(actx, {1: DiscretizationDOFAxisTag()},
+                tag_axes(actx, {
+                        1: DiscretizationDOFAxisTag(
+                            from_grp.discretization_key())},
                     actx.from_numpy(result)))
 
     # }}}
@@ -736,6 +740,17 @@ class DirectDiscretizationConnection(DiscretizationConnection):
         for i_tgrp, (cgrp, group_pick_info) in enumerate(
                 zip(self.groups, self._global_point_pick_info(actx), strict=True)):
 
+            if self.tag_out_dof_axes:
+                to_discr_key = self.to_discr.groups[i_tgrp].discretization_key()
+                def tag_out_dof_axis(iaxis, ary):
+                    return tag_axes(actx,
+                        {iaxis: DiscretizationDOFAxisTag(to_discr_key)},
+                        ary)
+
+            else:
+                def tag_out_dof_axis(iaxis, ary):
+                    return ary
+
             group_array_contributions: list[Array] = []
 
             if _force_no_merged_batches:
@@ -750,30 +765,27 @@ class DirectDiscretizationConnection(DiscretizationConnection):
 
                         if ary[fgpd.from_group_index].size:
                             grp_ary_contrib = ary[fgpd.from_group_index][
-                                    tag_axes(actx, {
-                                            1: DiscretizationDOFAxisTag()},
-                                        _reshape_and_preserve_tags(
+                                    tag_out_dof_axis(
+                                        1, _reshape_and_preserve_tags(
                                             actx, from_element_indices, (-1, 1))),
-                                        actx.thaw(fgpd.dof_pick_lists)[
-                                            actx.thaw(fgpd.dof_pick_list_indices)]
-                                        ]
+                                    actx.thaw(fgpd.dof_pick_lists)[
+                                        actx.thaw(fgpd.dof_pick_list_indices)]
+                                    ]
 
                             if not fgpd.is_surjective:
                                 from_el_present = actx.thaw(fgpd.from_el_present)
                                 grp_ary_contrib = actx.np.where(
-                                    tag_axes(actx, {
-                                            1: DiscretizationDOFAxisTag()},
-                                             _reshape_and_preserve_tags(
-                                        actx, from_el_present, (-1, 1))),
+                                    tag_out_dof_axis(
+                                        1, _reshape_and_preserve_tags(
+                                            actx, from_el_present, (-1, 1))),
                                     grp_ary_contrib,
                                     0)
 
                             # attach metadata
-                            grp_ary_contrib = tag_axes(
-                                    actx,
-                                    {0: DiscretizationElementAxisTag(),
-                                        1: DiscretizationDOFAxisTag()},
-                                    grp_ary_contrib)
+                            grp_ary_contrib = tag_out_dof_axis(
+                                1, tag_axes(actx,
+                                    {0: DiscretizationElementAxisTag()},
+                                    grp_ary_contrib))
 
                             group_array_contributions.append(grp_ary_contrib)
                 else:
@@ -814,13 +826,12 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                         mat = self._resample_matrix(actx, i_tgrp, i_batch)
                         if actx.permits_advanced_indexing and not _force_use_loopy:
                             batch_result = actx.np.where(
-                                    tag_axes(actx, {
-                                            1: DiscretizationDOFAxisTag()},
-                                    _reshape_and_preserve_tags(
+                                tag_out_dof_axis(
+                                    1, _reshape_and_preserve_tags(
                                         actx, from_el_present, (-1, 1))),
-                                    actx.einsum("ij,ej->ei",
-                                        mat, grp_ary[from_element_indices]),
-                                    0)
+                                actx.einsum("ij,ej->ei",
+                                    mat, grp_ary[from_element_indices]),
+                                0)
                         else:
                             batch_result = actx.call_loopy(
                                 batch_mat_knl(),
@@ -838,15 +849,13 @@ class DirectDiscretizationConnection(DiscretizationConnection):
 
                         if actx.permits_advanced_indexing and not _force_use_loopy:
                             batch_result = actx.np.where(
-                                tag_axes(actx, {
-                                        1: DiscretizationDOFAxisTag()},
-                                _reshape_and_preserve_tags(
-                                    actx, from_el_present, (-1, 1))),
+                                tag_out_dof_axis(
+                                    1, _reshape_and_preserve_tags(
+                                        actx, from_el_present, (-1, 1))),
                                 from_vec[
-                                    tag_axes(actx, {
-                                            1: DiscretizationDOFAxisTag()},
-                                    _reshape_and_preserve_tags(
-                                        actx, from_element_indices, (-1, 1))),
+                                    tag_out_dof_axis(
+                                        1, _reshape_and_preserve_tags(
+                                            actx, from_element_indices, (-1, 1))),
                                     pick_list],
                                 0)
                         else:
@@ -861,10 +870,11 @@ class DirectDiscretizationConnection(DiscretizationConnection):
                             )["result"]
 
                     # attach metadata
-                    batch_result = tag_axes(actx,
-                                            {0: DiscretizationElementAxisTag(),
-                                             1: DiscretizationDOFAxisTag()},
-                                            batch_result,)
+                    batch_result = tag_out_dof_axis(
+                        1,
+                        tag_axes(actx,
+                            {0: DiscretizationElementAxisTag()},
+                            batch_result))
 
                     group_array_contributions.append(batch_result)
 
@@ -873,13 +883,14 @@ class DirectDiscretizationConnection(DiscretizationConnection):
             else:
                 # If no batched data at all, return zeros for this
                 # particular group array
-                group_array = tag_axes(actx, {
-                        0: DiscretizationElementAxisTag(),
-                        1: DiscretizationDOFAxisTag()},
-                    actx.np.zeros(
-                        shape=(self.to_discr.groups[i_tgrp].nelements,
-                               self.to_discr.groups[i_tgrp].nunit_dofs),
-                        dtype=ary.entry_dtype))
+                group_array = tag_out_dof_axis(
+                    1,
+                    tag_axes(actx,
+                        {0: DiscretizationElementAxisTag()},
+                        actx.np.zeros(
+                            shape=(self.to_discr.groups[i_tgrp].nelements,
+                                   self.to_discr.groups[i_tgrp].nunit_dofs),
+                            dtype=ary.entry_dtype)))
 
             group_arrays.append(group_array)
 
