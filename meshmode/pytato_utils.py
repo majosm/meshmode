@@ -6,7 +6,7 @@ from functools import partial, reduce
 from arraycontext.impl.pytato.fake_numpy import PytatoFakeNumpyNamespace
 from arraycontext import rec_map_reduce_array_container
 from meshmode.transform_metadata import DiscretizationEntityAxisTag
-from pytato.transform import ArrayOrNames
+from pytato.transform import ArrayOrNames, CopyMapper
 from pytato.transform.metadata import (
     AxesTagsEquationCollector as BaseAxesTagsEquationCollector)
 from arraycontext import ArrayContainer
@@ -73,6 +73,28 @@ class EagerReduceComputingPytatoFakeNumpyNamespace(PytatoFakeNumpyNamespace):
             return super().max(a, axis=axis)
 
 
+class DiscrKeyRemover(CopyMapper):
+    def rec(self, expr: ArrayOrNames) -> ArrayOrNames:
+        rec_expr = super().rec(expr)
+        if isinstance(rec_expr, pt.Array):
+            from dataclasses import replace
+            from meshmode.transform_metadata import DiscretizationDOFAxisTag
+            return replace(
+                rec_expr,
+                axes=tuple(
+                    replace(
+                        axis,
+                        tags=frozenset(
+                            (
+                                DiscretizationDOFAxisTag()
+                                if isinstance(tag, DiscretizationDOFAxisTag)
+                                else tag)
+                            for tag in axis.tags))
+                    for axis in rec_expr.axes))
+        else:
+            return rec_expr
+
+
 # {{{ solve for discretization metadata for arrays' axes
 
 class AxesTagsEquationCollector(BaseAxesTagsEquationCollector):
@@ -104,6 +126,10 @@ def unify_discretization_entity_tags(expr: Union[ArrayContainer, ArrayOrNames]
     if not isinstance(expr, (pt.Array, pt.DictOfNamedArrays)):
         return rec_map_array_container(unify_discretization_entity_tags,
                                        expr)
+
+    # Reset discr_key to None in DiscretizationDOFAxisTag for now (remove once
+    # meshmode/grudge/mirgecom are all updated to use it)
+    expr = DiscrKeyRemover()(expr)
 
     return pt.unify_axes_tags(expr,
                               tag_t=DiscretizationEntityAxisTag,
