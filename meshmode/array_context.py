@@ -858,14 +858,15 @@ def _do_inames_belong_to_different_einsum_types(iname1, iname2, kernel):
 
 
 def _fuse_loops_over_a_discr_entity(knl,
-                                    mesh_entity,
+                                    mesh_entity_type,
+                                    mesh_entity_filter_func,
                                     fused_loop_prefix,
                                     should_fuse_redn_loops,
                                     orig_knl):
     import loopy as lp
     import kanren
     from functools import reduce, partial
-    taggedo = lp.relations.get_taggedo_of_type(orig_knl, mesh_entity)
+    taggedo = lp.relations.get_taggedo_of_type(orig_knl, mesh_entity_type)
 
     redn_loops = reduce(frozenset.union,
                         (insn.reduction_inames()
@@ -885,6 +886,9 @@ def _fuse_loops_over_a_discr_entity(knl,
                       results_filter=frozenset)
     for itag, tag in enumerate(
             sorted(tags, key=lambda x: _discr_entity_sort_key(x))):
+        if not mesh_entity_filter_func(tag):
+            continue
+
         # iname_k: iname tagged with 'tag'
         iname_k = kanren.var()
         inames = kanren.run(0,
@@ -921,41 +925,58 @@ def _fuse_loops_over_a_discr_entity(knl,
 
 @memoize_on_disk
 def fuse_same_discretization_entity_loops(knl):
+    from functools import reduce
+    discr_keys = reduce(
+        frozenset.union,
+        (
+            frozenset(
+                tag.discr_key for tag in
+                knl.iname_tags_of_type(iname, DiscretizationDOFAxisTag))
+            for iname in knl.all_inames()),
+        frozenset())
+
+    # Not sure if there's a more reliable way to make discr keys sortable? Their
+    # structure is unspecified beyond being Sequence[Hashable]
+    def rec_class_to_class_name(key):
+        if isinstance(key, tuple):
+            return tuple(
+                rec_class_to_class_name(subkey)
+                for subkey in key)
+        elif isinstance(key, type):
+            return key.__name__
+        else:
+            return key
+
+    discr_keys = sorted(discr_keys, key=rec_class_to_class_name)
+
     # maintain an 'orig_knl' to keep the original iname and tags before
     # transforming it.
     orig_knl = knl
 
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationFaceAxisTag,
-                                          "iface",
-                                          False,
-                                          orig_knl)
+    knl = _fuse_loops_over_a_discr_entity(
+        knl, DiscretizationFaceAxisTag, lambda _: True, f"iface", False, orig_knl)
 
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationElementAxisTag,
-                                          "iel",
-                                          False,
-                                          orig_knl)
+    knl = _fuse_loops_over_a_discr_entity(
+        knl, DiscretizationElementAxisTag, lambda _: True, f"iel", False, orig_knl)
 
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationDOFAxisTag,
-                                          "idof",
-                                          False,
-                                          orig_knl)
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationDimAxisTag,
-                                          "idim",
-                                          False,
-                                          orig_knl)
+    for idiscr, discr_key in enumerate(discr_keys):
+        knl = _fuse_loops_over_a_discr_entity(
+            knl, DiscretizationDOFAxisTag, lambda tag: tag.discr_key == discr_key,
+            f"idof{idiscr}", False, orig_knl)
 
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationFaceAxisTag,
-                                          "iface",
-                                          True,
-                                          orig_knl)
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationDOFAxisTag,
-                                          "idof",
-                                          True,
-                                          orig_knl)
-    knl = _fuse_loops_over_a_discr_entity(knl, DiscretizationDimAxisTag,
-                                          "idim",
-                                          True,
-                                          orig_knl)
+    knl = _fuse_loops_over_a_discr_entity(
+        knl, DiscretizationDimAxisTag, lambda _: True, f"idim", False, orig_knl)
+
+    knl = _fuse_loops_over_a_discr_entity(
+        knl, DiscretizationFaceAxisTag, lambda _: True, f"iface", True, orig_knl)
+
+    for idiscr, discr_key in enumerate(discr_keys):
+        knl = _fuse_loops_over_a_discr_entity(
+            knl, DiscretizationDOFAxisTag, lambda tag: tag.discr_key == discr_key,
+            f"idof{idiscr}", True, orig_knl)
+
+    knl = _fuse_loops_over_a_discr_entity(
+        knl, DiscretizationDimAxisTag, lambda _: True, f"idim", True, orig_knl)
 
     return knl
 

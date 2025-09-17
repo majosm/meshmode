@@ -127,10 +127,6 @@ def unify_discretization_entity_tags(expr: Union[ArrayContainer, ArrayOrNames]
         return rec_map_array_container(unify_discretization_entity_tags,
                                        expr)
 
-    # Reset discr_key to None in DiscretizationDOFAxisTag for now (remove once
-    # meshmode/grudge/mirgecom are all updated to use it)
-    expr = DiscrKeyRemover()(expr)
-
     return pt.unify_axes_tags(expr,
                               tag_t=DiscretizationEntityAxisTag,
                               equations_collector_t=AxesTagsEquationCollector)
