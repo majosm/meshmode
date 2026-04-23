@@ -1719,19 +1719,19 @@ class FusionContractorArrayContext(
                          stacklevel=2)
                     return super().transform_loopy_program(original_t_unit)
 
-        for insn in knl.instructions:
-            for assignee in insn.assignee_var_names():
-                var = knl.get_var_descriptor(assignee)
-                if not var.tags_of_type(FEMEinsumTag):
-                    if not self.use_einsum_inference_fallback:
-                        raise EinsumInferenceError(
-                            "Unable to infer instructions as einsums.")
-                    else:
-                        warn(f"[{knl.name}]: Falling back to a slower transformation"
-                             " strategy as some instructions couldn't be inferred as"
-                             " einsums",
-                             stacklevel=2)
-                        return super().transform_loopy_program(original_t_unit)
+        # for insn in knl.instructions:
+        #     for assignee in insn.assignee_var_names():
+        #         var = knl.get_var_descriptor(assignee)
+        #         if not var.tags_of_type(FEMEinsumTag):
+        #             if not self.use_einsum_inference_fallback:
+        #                 raise EinsumInferenceError(
+        #                     "Unable to infer instructions as einsums.")
+        #             else:
+        #                 warn(f"[{knl.name}]: Falling back to a slower transformation"
+        #                      " strategy as some instructions couldn't be inferred as"
+        #                      " einsums",
+        #                      stacklevel=2)
+        #                 return super().transform_loopy_program(original_t_unit)
 
         # }}}
 
