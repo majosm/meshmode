@@ -9,6 +9,7 @@
 .. autoclass:: DiscretizationAmbientDimAxisTag
 .. autoclass:: DiscretizationTopologicalDimAxisTag
 .. autoclass:: DiscretizationDOFPickListAxisTag
+.. autoclass:: DiscretizationCSRMatmulRowStartsAxisTag
 """
 from __future__ import annotations
 
@@ -132,4 +133,12 @@ class DiscretizationDOFPickListAxisTag(DiscretizationEntityAxisTag):
     Array dimensions tagged with this tag type describe an axis indexing over
     DOF pick lists. See :mod:`meshmode.discretization.connection.direct` for
     details.
+    """
+
+
+@tag_dataclass
+class DiscretizationCSRMatmulRowStartsAxisTag(DiscretizationEntityAxisTag):
+    """
+    Array dimensions tagged with this tag type describe an axis indexing over
+    the row start index array of a CSR sparse matrix.
     """
