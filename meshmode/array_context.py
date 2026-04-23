@@ -827,6 +827,14 @@ def _get_redn_iname_to_insns(kernel):
                 for k, v in redn_iname_to_insns.items()})
 
 
+def _does_iname_have_multiple_insns(iname, kernel):
+    if kernel.iname_to_insns()[iname]:
+        return len(kernel.iname_to_insns()[iname]) > 1
+    else:
+        redn_iname_to_insns = _get_redn_iname_to_insns(kernel)
+        return len(redn_iname_to_insns[iname]) > 1
+
+
 def _do_inames_belong_to_different_einsum_types(iname1, iname2, kernel):
     if kernel.iname_to_insns()[iname1]:
         assert (len(kernel.iname_to_insns()[iname1])
@@ -898,9 +906,14 @@ def _fuse_loops_over_a_discr_entity(knl,
             inames = inames & non_redn_loops
 
         length_to_inames = {}
+        import islpy as isl
         for iname in inames:
-            length = knl.get_constant_iname_length(iname)
-            length_to_inames.setdefault(length, set()).add(iname)
+            try:
+                length = knl.get_constant_iname_length(iname)
+            except isl._isl.Error:
+                pass
+            else:
+                length_to_inames.setdefault(length, set()).add(iname)
 
         for i, (_, inames_to_fuse) in enumerate(
                 sorted(length_to_inames.items())):
@@ -910,9 +923,11 @@ def _fuse_loops_over_a_discr_entity(knl,
                 lp.get_kennedy_unweighted_fusion_candidates(
                     knl, inames_to_fuse,
                     prefix=f"{fused_loop_prefix}_{itag}_{i}_",
-                    force_infusible=partial(
-                        _do_inames_belong_to_different_einsum_types,
-                        kernel=orig_knl),
+                    force_infusible=lambda iname1, iname2: (
+                        _does_iname_have_multiple_insns(iname1, orig_knl)
+                        or _does_iname_have_multiple_insns(iname2, orig_knl)
+                        or _do_inames_belong_to_different_einsum_types(
+                            iname1, iname2, orig_knl)),
                 ))
         knl = lp.tag_inames(knl, {f"{fused_loop_prefix}_{itag}_*": tag})
 
