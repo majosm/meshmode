@@ -486,7 +486,7 @@ def _alias_global_temporaries(t_unit):
     from collections import defaultdict
 
     kernel = t_unit.default_entrypoint
-    toposorted_iels = _get_element_loop_topo_sorted_order(kernel)
+    toposorted_iels = _get_outer_element_loop_topo_sorted_order(kernel)
     iel_order = {iel: i
                  for i, iel in enumerate(toposorted_iels)}
 
@@ -827,6 +827,14 @@ def _get_redn_iname_to_insns(kernel):
                 for k, v in redn_iname_to_insns.items()})
 
 
+def _does_iname_have_multiple_insns(iname, kernel):
+    if kernel.iname_to_insns()[iname]:
+        return len(kernel.iname_to_insns()[iname]) > 1
+    else:
+        redn_iname_to_insns = _get_redn_iname_to_insns(kernel)
+        return len(redn_iname_to_insns[iname]) > 1
+
+
 def _do_inames_belong_to_different_einsum_types(iname1, iname2, kernel):
     if kernel.iname_to_insns()[iname1]:
         assert (len(kernel.iname_to_insns()[iname1])
@@ -898,9 +906,14 @@ def _fuse_loops_over_a_discr_entity(knl,
             inames = inames & non_redn_loops
 
         length_to_inames = {}
+        import islpy as isl
         for iname in inames:
-            length = knl.get_constant_iname_length(iname)
-            length_to_inames.setdefault(length, set()).add(iname)
+            try:
+                length = knl.get_constant_iname_length(iname)
+            except isl._isl.Error:
+                pass
+            else:
+                length_to_inames.setdefault(length, set()).add(iname)
 
         for i, (_, inames_to_fuse) in enumerate(
                 sorted(length_to_inames.items())):
@@ -910,9 +923,11 @@ def _fuse_loops_over_a_discr_entity(knl,
                 lp.get_kennedy_unweighted_fusion_candidates(
                     knl, inames_to_fuse,
                     prefix=f"{fused_loop_prefix}_{itag}_{i}_",
-                    force_infusible=partial(
-                        _do_inames_belong_to_different_einsum_types,
-                        kernel=orig_knl),
+                    force_infusible=lambda iname1, iname2: (
+                        _does_iname_have_multiple_insns(iname1, orig_knl)
+                        or _does_iname_have_multiple_insns(iname2, orig_knl)
+                        or _do_inames_belong_to_different_einsum_types(
+                            iname1, iname2, orig_knl)),
                 ))
         knl = lp.tag_inames(knl, {f"{fused_loop_prefix}_{itag}_*": tag})
 
@@ -1126,19 +1141,32 @@ def _get_iel_loop_from_insn(insn, knl):
     return iel
 
 
-def _get_element_loop_topo_sorted_order(knl):
+def _get_outer_element_loop_topo_sorted_order(knl):
     from loopy import MultiAssignmentBase
-    dag = {iel: set()
-           for iel in knl.all_inames()
-           if knl.inames[iel].tags_of_type(DiscretizationElementAxisTag)}
+
+    iname_to_insns = knl.iname_to_insns()
+    all_iels = {
+        iel for iel in knl.all_inames()
+        if knl.inames[iel].tags_of_type(DiscretizationElementAxisTag)}
+
+    # FIXME: Not sure if there's a nicer way to do this...
+    outer_iels = {
+        iel for iel in all_iels
+        if not any(iname_to_insns[iel] < iname_to_insns[other]
+                   for other in knl.all_inames() if other != iel)}
+
+    dag = {iel: set() for iel in outer_iels}
 
     for insn in knl.instructions:
-        if isinstance(insn, MultiAssignmentBase):
-            succ_iel = _get_iel_loop_from_insn(insn, knl)
-            for dep_id in insn.depends_on:
-                pred_iel = _get_iel_loop_from_insn(knl.id_to_insn[dep_id], knl)
-                if pred_iel != succ_iel:
-                    dag[pred_iel].add(succ_iel)
+        if not isinstance(insn, MultiAssignmentBase):
+            continue
+        succ_iel = _get_iel_loop_from_insn(insn, knl)
+        if succ_iel not in outer_iels:
+            continue
+        for dep_id in insn.depends_on:
+            pred_iel = _get_iel_loop_from_insn(knl.id_to_insn[dep_id], knl)
+            if pred_iel in outer_iels and pred_iel != succ_iel:
+                dag[pred_iel].add(succ_iel)
 
     from pytools.graph import compute_topological_order
     return compute_topological_order(dag, key=lambda x: x)
@@ -1846,7 +1874,7 @@ class FusionContractorArrayContext(
 
         # {{{ insert barriers between consecutive iel-loops
 
-        toposorted_iels = _get_element_loop_topo_sorted_order(knl)
+        toposorted_iels = _get_outer_element_loop_topo_sorted_order(knl)
 
         for iel_pred, iel_succ in zip(toposorted_iels[:-1],
                                       toposorted_iels[1:]):
