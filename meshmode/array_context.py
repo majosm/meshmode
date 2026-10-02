@@ -1691,6 +1691,8 @@ class FusionContractorArrayContext(
         knl = t_unit.default_entrypoint
 
         try:
+            if not lp.CACHING_ENABLED:
+                raise KeyError
             r = self.transform_loopy_cache[t_unit]
         except KeyError:
             logger.info(f"FusionContractorArrayContext.transform_loopy_program '{knl.name}': cache miss")
@@ -1925,7 +1927,8 @@ class FusionContractorArrayContext(
 
         # }}}
 
-        self.transform_loopy_cache.store_if_not_present(original_t_unit, t_unit)
+        if lp.CACHING_ENABLED:
+            self.transform_loopy_cache.store_if_not_present(original_t_unit, t_unit)
 
         return t_unit
 
