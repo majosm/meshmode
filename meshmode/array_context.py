@@ -857,6 +857,25 @@ def _do_inames_belong_to_different_einsum_types(iname1, iname2, kernel):
     return ensm1 != ensm2
 
 
+def _get_taggedo_of_type(kernel, tag_type):
+    import kanren
+    taggedo = kanren.Relation()
+
+    for arg_name, arg in kernel.arg_dict.items():
+        for tag in arg.tags_of_type(tag_type):
+            kanren.facts(taggedo, (arg_name, tag))
+
+    for iname_name, iname in kernel.inames.items():
+        for tag in iname.tags_of_type(tag_type):
+            kanren.facts(taggedo, (iname_name, tag))
+
+    for insn in kernel.instructions:
+        for tag in insn.tags_of_type(tag_type):
+            kanren.facts(taggedo, (insn.id, tag))
+
+    return taggedo
+
+
 def _fuse_loops_over_a_discr_entity(knl,
                                     mesh_entity,
                                     fused_loop_prefix,
@@ -864,8 +883,8 @@ def _fuse_loops_over_a_discr_entity(knl,
                                     orig_knl):
     import loopy as lp
     import kanren
-    from functools import reduce, partial
-    taggedo = lp.relations.get_taggedo_of_type(orig_knl, mesh_entity)
+    from functools import reduce
+    taggedo = _get_taggedo_of_type(orig_knl, mesh_entity)
 
     redn_loops = reduce(frozenset.union,
                         (insn.reduction_inames()
@@ -910,9 +929,6 @@ def _fuse_loops_over_a_discr_entity(knl,
                 lp.get_kennedy_unweighted_fusion_candidates(
                     knl, inames_to_fuse,
                     prefix=f"{fused_loop_prefix}_{itag}_{i}_",
-                    force_infusible=partial(
-                        _do_inames_belong_to_different_einsum_types,
-                        kernel=orig_knl),
                 ))
         knl = lp.tag_inames(knl, {f"{fused_loop_prefix}_{itag}_*": tag})
 
@@ -1249,7 +1265,7 @@ def _get_elementwise_einsum(t_unit, einsum_tag):
 
 
 def _combine_einsum_domains(knl):
-    import islpy as isl
+    from namedisl import DimType
     from functools import reduce
 
     new_domains = []
@@ -1270,7 +1286,7 @@ def _combine_einsum_domains(knl):
                         frozenset())
         domain = knl.get_inames_domain(frozenset(inames))
         new_domains.append(domain.project_out_except(sorted(inames),
-                                                     [isl.dim_type.set]))
+                                                     dim_type=DimType.out))
 
     return knl.copy(domains=new_domains)
 
